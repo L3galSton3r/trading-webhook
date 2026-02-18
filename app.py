@@ -19,9 +19,9 @@ SYMBOL_MAPPINGS = {
     'GBPUSD': 'GBPUSD.m',
     'USDJPY': 'USDJPY.m',
     'BTCUSD': 'BTCUSD.m',
-    'NAS100': 'NAS100',
-    'US30': 'US30',
-    'US500': 'US500'
+    'NAS100': 'US100.std',
+    'US30': 'US30.std',
+    'US500': 'US500.std'
 }
 
 def map_symbol(tv_symbol):
@@ -184,4 +184,5 @@ def orb_webhook():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+
     app.run(host='0.0.0.0', port=port)
