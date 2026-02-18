@@ -21,6 +21,7 @@ SYMBOL_MAPPINGS = {
     'BTCUSD': 'BTCUSD.m',
     'NAS100': 'US100.std',
     'US30': 'US30.std',
+    'DE40': 'GER40.std',
     'US500': 'US500.std'
 }
 
@@ -186,3 +187,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
 
     app.run(host='0.0.0.0', port=port)
+
