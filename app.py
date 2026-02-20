@@ -22,7 +22,9 @@ SYMBOL_MAPPINGS = {
     'NAS100': 'US100.std',
     'US30': 'US30.std',
     'US500': 'US500.std',
-    'GER40': 'DE40.std'
+    'GER40': 'DE40.std',
+    'AAPL': 'AAPL.m',
+    'AMZN': 'AMZN.m'
 }
 
 def map_symbol(tv_symbol):
@@ -187,6 +189,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
 
     app.run(host='0.0.0.0', port=port)
+
 
 
 
