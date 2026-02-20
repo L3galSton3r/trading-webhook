@@ -141,13 +141,13 @@ def fibo_webhook():
 
 @app.route('/orb', methods=['POST'])
 def orb_webhook():
-    """ORB signal endpoint"""
+    """ORB signal endpoint - Enhanced for multi-TP system (backwards compatible)"""
     try:
         data = request.json
         log_signal("ORB", data)
         
-        # Validate ORB required fields
-        required = ['trade_id', 'symbol', 'direction', 'entry', 'stop_loss', 'take_profit', 'magic']
+        # Validate ORB required fields (works for both old and new ORB)
+        required = ['trade_id', 'symbol', 'direction', 'entry', 'stop_loss', 'magic']
         
         valid, missing = validate_signal(data, required)
         if not valid:
@@ -167,13 +167,33 @@ def orb_webhook():
         # Map symbol
         data['symbol'] = map_symbol(data.get('symbol', ''))
         
+        # Log details - handle both old (single TP) and new (multi-TP) format
+        print(f"Entry: {data.get('entry', 0)}")
+        print(f"SL: {data.get('stop_loss', 0)}")
+        
+        # New ORB format has tp1, tp2, tp3
+        if 'tp1' in data:
+            print(f"Session: {data.get('session', 'N/A')}")
+            print(f"TP1: {data.get('tp1', 0)} ({data.get('rr_tp1', 0)}R)")
+            print(f"TP2: {data.get('tp2', 0)} ({data.get('rr_tp2', 0)}R)")
+            print(f"TP3: {data.get('tp3', 0)} ({data.get('rr_tp3', 0)}R)")
+            print(f"ORB Range: {data.get('orb_low', 0)} - {data.get('orb_high', 0)}")
+            print(f"Retests: {data.get('retests', 0)}")
+            print(f"Risk: {data.get('risk_pts', 0)} points")
+        # Old ORB format has single take_profit
+        elif 'take_profit' in data:
+            print(f"TP: {data.get('take_profit', 0)}")
+            print(f"Quality: {data.get('quality', 0)}⭐")
+        
         # Forward to PC
         success, message = forward_to_pc('/orb', data)
         
         if success:
             return jsonify({
                 "status": "success",
-                "message": "ORB signal forwarded to MT5"
+                "message": "ORB signal forwarded to MT5",
+                "session": data.get('session', 'Unknown'),
+                "direction": data.get('direction')
             }), 200
         else:
             return jsonify({
@@ -187,10 +207,4 @@ def orb_webhook():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-
     app.run(host='0.0.0.0', port=port)
-
-
-
-
-
