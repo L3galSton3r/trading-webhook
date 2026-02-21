@@ -79,7 +79,7 @@ def log_entry_to_sheets(signal):
         date_str = now.strftime('%Y-%m-%d')
         time_str = now.strftime('%H:%M:%S')
         
-        risk_percent = 1.0 if signal.get('zone_type') == 'MAJOR' else 0.5
+        risk_percent = 2.0 if signal.get('zone_type') == 'MAJOR' else 1.0
         
         row = [
             signal.get('trade_id', ''),
