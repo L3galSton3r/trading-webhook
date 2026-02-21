@@ -1,0 +1,8 @@
+@echo off
+title Local Signal Receiver
+echo ========================================
+echo Starting Local Signal Receiver...
+echo ========================================
+cd /d "C:\Users\mario\Documents\trading-webhook"
+python local_receiver.py
+pause
