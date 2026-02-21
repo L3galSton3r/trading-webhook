@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import os
 import json
 import requests
@@ -320,3 +321,215 @@ def health():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
+=======
+from flask import Flask, request, jsonify
+import requests
+import os
+import json
+from datetime import datetime
+
+app = Flask(__name__)
+
+# Environment variable for your PC's URL
+LOCAL_RECEIVER_URL = os.environ.get('LOCAL_RECEIVER_URL', 'http://localhost:5002')
+
+# Symbol mappings (shared between both systems)
+SYMBOL_MAPPINGS = {
+    'XAUUSD': 'XAUUSD.m',
+    'XPTUSD': 'XPTUSD.m',
+    'XAGUSD': 'XAGUSD.m',
+    'OIL_CRUDE': 'WTI.m',
+    'EURUSD': 'EURUSD.m',
+    'GBPUSD': 'GBPUSD.m',
+    'USDJPY': 'USDJPY.m',
+    'BTCUSD': 'BTCUSD.m',
+    'NAS100': 'US100.std',
+    'US30': 'US30.std',
+    'US500': 'US500.std',
+    'GER40': 'DE40.std',
+    'AAPL': 'AAPL.m',
+    'AMZN': 'AMZN.m'
+}
+
+def map_symbol(tv_symbol):
+    """Map TradingView symbol to broker symbol"""
+    return SYMBOL_MAPPINGS.get(tv_symbol, tv_symbol)
+
+def log_signal(strategy, data):
+    """Log signal details"""
+    print("=" * 60)
+    print(f"📊 {strategy} Signal Received from TradingView")
+    print("=" * 60)
+    print(f"Trade ID: {data.get('trade_id', 'N/A')}")
+    print(f"Symbol: {data.get('symbol', 'N/A')}")
+    print(f"Direction: {data.get('direction', 'N/A')}")
+    print("-" * 60)
+
+def validate_signal(data, required_fields):
+    """Validate required fields in signal"""
+    missing = [field for field in required_fields if field not in data]
+    if missing:
+        print(f"❌ Missing fields: {', '.join(missing)}")
+        return False, missing
+    return True, []
+
+def forward_to_pc(endpoint, data):
+    """Forward signal to local PC"""
+    try:
+        url = f"{LOCAL_RECEIVER_URL}{endpoint}"
+        print(f"Forwarding to: {url}")
+        
+        response = requests.post(url, json=data, timeout=10)
+        
+        if response.status_code == 200:
+            print(f"✅ Successfully forwarded to PC")
+            return True, "Success"
+        else:
+            print(f"❌ PC responded with error: {response.status_code}")
+            return False, f"PC error: {response.status_code}"
+            
+    except requests.exceptions.Timeout:
+        print(f"❌ Timeout connecting to PC")
+        return False, "PC timeout"
+        
+    except requests.exceptions.ConnectionError:
+        print(f"❌ Cannot connect to PC")
+        return False, "PC unreachable"
+        
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        return False, str(e)
+
+@app.route('/', methods=['GET'])
+def home():
+    """Status page"""
+    return jsonify({
+        "status": "Trading Webhook Active",
+        "version": "2.0",
+        "endpoints": {
+            "fibo": "/fibo",
+            "orb": "/orb",
+            "health": "/health"
+        },
+        "forwards_to": LOCAL_RECEIVER_URL,
+        "symbol_mappings": len(SYMBOL_MAPPINGS)
+    }), 200
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check"""
+    return jsonify({
+        "status": "online",
+        "time": datetime.now().isoformat(),
+        "pc_url": LOCAL_RECEIVER_URL
+    }), 200
+
+@app.route('/fibo', methods=['POST'])
+def fibo_webhook():
+    """FIBO signal endpoint"""
+    try:
+        data = request.json
+        log_signal("FIBO", data)
+        
+        # Validate FIBO required fields
+        required = ['trade_id', 'symbol', 'direction', 'zone_type', 
+                   'zone_low', 'zone_high', 'stop_loss', 'tp1']
+        
+        valid, missing = validate_signal(data, required)
+        if not valid:
+            return jsonify({
+                "status": "error",
+                "message": f"Missing fields: {', '.join(missing)}"
+            }), 400
+        
+        # Map symbol
+        data['symbol'] = map_symbol(data.get('symbol', ''))
+        
+        # Forward to PC
+        success, message = forward_to_pc('/fibo', data)
+        
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": "FIBO signal forwarded to MT5"
+            }), 200
+        else:
+            return jsonify({
+                "status": "error",
+                "message": message
+            }), 503
+            
+    except Exception as e:
+        print(f"❌ FIBO Error: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/orb', methods=['POST'])
+def orb_webhook():
+    """ORB signal endpoint - Enhanced for multi-TP system (backwards compatible)"""
+    try:
+        data = request.json
+        log_signal("ORB", data)
+        
+        # Validate ORB required fields (works for both old and new ORB)
+        required = ['trade_id', 'symbol', 'direction', 'entry', 'stop_loss', 'magic']
+        
+        valid, missing = validate_signal(data, required)
+        if not valid:
+            return jsonify({
+                "status": "error",
+                "message": f"Missing fields: {', '.join(missing)}"
+            }), 400
+        
+        # Validate ORB trade_id format
+        if not data['trade_id'].startswith('ORB_'):
+            print(f"⚠️ Not an ORB signal: {data['trade_id']}")
+            return jsonify({
+                "status": "rejected",
+                "reason": "Not an ORB signal"
+            }), 400
+        
+        # Map symbol
+        data['symbol'] = map_symbol(data.get('symbol', ''))
+        
+        # Log details - handle both old (single TP) and new (multi-TP) format
+        print(f"Entry: {data.get('entry', 0)}")
+        print(f"SL: {data.get('stop_loss', 0)}")
+        
+        # New ORB format has tp1, tp2, tp3
+        if 'tp1' in data:
+            print(f"Session: {data.get('session', 'N/A')}")
+            print(f"TP1: {data.get('tp1', 0)} ({data.get('rr_tp1', 0)}R)")
+            print(f"TP2: {data.get('tp2', 0)} ({data.get('rr_tp2', 0)}R)")
+            print(f"TP3: {data.get('tp3', 0)} ({data.get('rr_tp3', 0)}R)")
+            print(f"ORB Range: {data.get('orb_low', 0)} - {data.get('orb_high', 0)}")
+            print(f"Retests: {data.get('retests', 0)}")
+            print(f"Risk: {data.get('risk_pts', 0)} points")
+        # Old ORB format has single take_profit
+        elif 'take_profit' in data:
+            print(f"TP: {data.get('take_profit', 0)}")
+            print(f"Quality: {data.get('quality', 0)}⭐")
+        
+        # Forward to PC
+        success, message = forward_to_pc('/orb', data)
+        
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": "ORB signal forwarded to MT5",
+                "session": data.get('session', 'Unknown'),
+                "direction": data.get('direction')
+            }), 200
+        else:
+            return jsonify({
+                "status": "error",
+                "message": message
+            }), 503
+            
+    except Exception as e:
+        print(f"❌ ORB Error: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+>>>>>>> f67fb232efa539df76f8db87c84e16721084ae8f
