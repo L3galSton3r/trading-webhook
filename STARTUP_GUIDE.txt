@@ -218,7 +218,7 @@ This is EXPECTED and proves the pipeline is working correctly.
 
 Copy and paste this ENTIRE block into PowerShell:
 
-PowerShell
+PowerShell:
 
 Write-Host "`nTesting ORB Pipeline..." -ForegroundColor Cyan
 
@@ -251,9 +251,10 @@ try {
     Write-Host "❌ ORB Pipeline Test Failed!" -ForegroundColor Red
     Write-Host $_.Exception.Message
 }
+
 ✅ EXPECTED IN POWERSHELL:
 
-text
+text:
 
 Testing ORB Pipeline...
 ✅ ORB Pipeline Test Success!
@@ -265,7 +266,7 @@ Testing ORB Pipeline...
 }
 ✅ EXPECTED IN LOCAL RECEIVER (Window #2):
 
-text
+text:
 
 ============================================================
 📊 ORB Signal Received from Render
@@ -288,7 +289,7 @@ Risk Points: 50.0
 ✅ Signal saved to: orb_signal.json
 ✅ EXPECTED IN MT5 EXPERTS TAB:
 
-text
+text:
 
 [ORB] ╔═══════════════════════════════════════════════════════════╗
 [ORB] ║              NEW ORB SIGNAL RECEIVED                      ║
