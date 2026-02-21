@@ -190,6 +190,74 @@ def log_entry_to_sheets(signal):
         print(f"[ERROR] Failed to log entry: {e}")
         return False
 
+def calculate_duration(outcome, worksheet, row_num):
+    """Calculate trade duration from entry to exit"""
+    try:
+        timestamp = outcome.get('timestamp', '')
+        
+        # Try to get entry time from outcome
+        if 'entry_time' in outcome:
+            entry_time_str = outcome['entry_time']
+        else:
+            # Get entry time from sheet (Column C = 3 for Time, Column B = 2 for Date)
+            entry_date = worksheet.cell(row_num, 2).value  # Date
+            entry_time = worksheet.cell(row_num, 3).value  # Time
+            if entry_date and entry_time:
+                entry_time_str = f"{entry_date} {entry_time}"
+            else:
+                return None
+        
+        # Parse timestamps
+        # Handle different formats
+        for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%H:%M:%S']:
+            try:
+                if 'T' in entry_time_str or '-' in entry_time_str:
+                    entry_dt = datetime.strptime(entry_time_str, fmt)
+                else:
+                    # If only time, use today's date
+                    entry_dt = datetime.strptime(entry_time_str, '%H:%M:%S')
+                break
+            except:
+                continue
+        else:
+            return None
+        
+        for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%H:%M:%S']:
+            try:
+                if 'T' in timestamp or '-' in timestamp:
+                    exit_dt = datetime.strptime(timestamp, fmt)
+                else:
+                    exit_dt = datetime.strptime(timestamp, '%H:%M:%S')
+                break
+            except:
+                continue
+        else:
+            return None
+        
+        # Calculate duration
+        duration = exit_dt - entry_dt
+        
+        # Format nicely
+        total_seconds = int(duration.total_seconds())
+        if total_seconds < 0:
+            total_seconds = abs(total_seconds)
+        
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        if hours > 24:
+            days = hours // 24
+            hours = hours % 24
+            return f"{days}d {hours}h {minutes}m"
+        elif hours > 0:
+            return f"{hours}h {minutes}m {seconds}s"
+        else:
+            return f"{minutes}m {seconds}s"
+    
+    except Exception as e:
+        print(f"[WARNING] Could not calculate duration: {e}")
+        return None
+
 def update_trade_outcome(outcome):
     """Update trade outcome across all worksheets"""
     try:
@@ -205,40 +273,150 @@ def update_trade_outcome(outcome):
         profit = outcome.get('profit', 0)
         timestamp = outcome.get('timestamp', '')
         
+        # ═══════════════════════════════════════════════════════════════
+        # ALWAYS UPDATE THESE IF PROVIDED (regardless of event type)
+        # ═══════════════════════════════════════════════════════════════
+        
+        # Lot Size (Column M = 13) - CRITICAL for accurate P&L
+        if 'lot_size' in outcome:
+            worksheet.update_cell(row_num, 13, outcome['lot_size'])
+            print(f"[SHEETS] Lot size updated: {outcome['lot_size']}")
+        
+        # Stop Loss (Column H = 8) - Update if SL was modified
+        if 'new_sl' in outcome:
+            worksheet.update_cell(row_num, 8, outcome['new_sl'])
+            print(f"[SHEETS] SL updated: {outcome['new_sl']}")
+        elif 'stop_loss' in outcome:
+            worksheet.update_cell(row_num, 8, outcome['stop_loss'])
+        elif 'sl' in outcome:
+            worksheet.update_cell(row_num, 8, outcome['sl'])
+        
+        # ═══════════════════════════════════════════════════════════════
+        # EVENT-SPECIFIC UPDATES
+        # ═══════════════════════════════════════════════════════════════
+        
         if event == 'ENTRY':
+            # Entry Price (Column G = 7)
             worksheet.update_cell(row_num, 7, price)
-            if 'lot_size' in outcome:
-                worksheet.update_cell(row_num, 13, outcome['lot_size'])
+            # Status (Column O = 15)
+            worksheet.update_cell(row_num, 15, 'Active')
+            print(f"[SHEETS] Entry logged @ {price}")
         
         elif event == 'TP1_HIT':
-            worksheet.update_cell(row_num, 15, 'TP1 Hit')
+            # Status (Column O = 15)
+            worksheet.update_cell(row_num, 15, 'TP1 Hit - Partial')
+            # TP1 Hit (Column P = 16)
             worksheet.update_cell(row_num, 16, f"{timestamp} @ {price}")
+            # Partial profit if provided
+            if profit != 0:
+                current_pnl = worksheet.cell(row_num, 22).value or "$0.00"
+                # You could accumulate partial profits here if needed
+            print(f"[SHEETS] TP1 hit @ {price}")
         
         elif event == 'TP2_HIT':
-            worksheet.update_cell(row_num, 15, 'TP2 Hit')
+            # Status (Column O = 15)
+            worksheet.update_cell(row_num, 15, 'TP2 Hit - Partial')
+            # TP2 Hit (Column Q = 17)
             worksheet.update_cell(row_num, 17, f"{timestamp} @ {price}")
+            print(f"[SHEETS] TP2 hit @ {price}")
         
         elif event == 'TP3_HIT':
-            worksheet.update_cell(row_num, 15, 'TP3 Hit')
+            # Status (Column O = 15)
+            worksheet.update_cell(row_num, 15, 'TP3 Hit - Partial')
+            # TP3 Hit (Column R = 18)
             worksheet.update_cell(row_num, 18, f"{timestamp} @ {price}")
+            print(f"[SHEETS] TP3 hit @ {price}")
         
         elif event == 'TP4_HIT':
+            # Status (Column O = 15)
             worksheet.update_cell(row_num, 15, 'TP4 Hit - Closed')
+            # TP4 Hit (Column S = 19)
             worksheet.update_cell(row_num, 19, f"{timestamp} @ {price}")
+            # Exit Time (Column W = 23)
             worksheet.update_cell(row_num, 23, timestamp)
+            # Final Outcome (Column U = 21)
+            worksheet.update_cell(row_num, 21, 'Win')
+            # Profit/Loss (Column V = 22)
             if profit != 0:
                 worksheet.update_cell(row_num, 22, f"${profit:.2f}")
+            # Duration (Column X = 24)
+            duration = calculate_duration(outcome, worksheet, row_num)
+            if duration:
+                worksheet.update_cell(row_num, 24, duration)
+            print(f"[SHEETS] TP4 hit - Trade closed @ {price} | Profit: ${profit:.2f}")
         
         elif event == 'BE_MOVED':
+            # BE Moved (Column T = 20)
             worksheet.update_cell(row_num, 20, f"Yes @ {timestamp}")
+            # Update Stop Loss to BE price (Column H = 8)
+            if 'be_price' in outcome:
+                worksheet.update_cell(row_num, 8, outcome['be_price'])
+                print(f"[SHEETS] BE moved - SL updated to {outcome['be_price']}")
+            elif 'entry_price' in outcome:
+                worksheet.update_cell(row_num, 8, outcome['entry_price'])
+                print(f"[SHEETS] BE moved - SL updated to entry {outcome['entry_price']}")
+            elif price != 0:
+                worksheet.update_cell(row_num, 8, price)
+                print(f"[SHEETS] BE moved - SL updated to {price}")
+            else:
+                print(f"[SHEETS] BE moved @ {timestamp} (no price provided)")
+        
+        elif event == 'SL_TRAILED' or event == 'TRAIL_MOVED':
+            # Update Stop Loss to new trailed price (Column H = 8)
+            if 'new_sl' in outcome:
+                worksheet.update_cell(row_num, 8, outcome['new_sl'])
+                print(f"[SHEETS] SL trailed to {outcome['new_sl']}")
+            elif price != 0:
+                worksheet.update_cell(row_num, 8, price)
+                print(f"[SHEETS] SL trailed to {price}")
         
         elif event == 'SL_HIT':
+            # Status (Column O = 15)
             worksheet.update_cell(row_num, 15, 'SL Hit - Closed')
+            # Exit Time (Column W = 23)
             worksheet.update_cell(row_num, 23, timestamp)
+            # Exit Price / Actual SL (Column H = 8) - where it actually closed
+            if price != 0:
+                worksheet.update_cell(row_num, 8, price)
+            # Profit/Loss (Column V = 22)
             if profit != 0:
                 worksheet.update_cell(row_num, 22, f"${profit:.2f}")
-                r_multiple = outcome.get('r_multiple', 0)
+            # Final Outcome (Column U = 21)
+            r_multiple = outcome.get('r_multiple', 0)
+            if r_multiple != 0:
                 worksheet.update_cell(row_num, 21, f"{r_multiple:+.2f}R")
+            else:
+                # Determine if it was BE or Loss
+                if profit == 0 or (profit > -1 and profit < 1):
+                    worksheet.update_cell(row_num, 21, 'Breakeven')
+                else:
+                    worksheet.update_cell(row_num, 21, 'Loss')
+            # Duration (Column X = 24)
+            duration = calculate_duration(outcome, worksheet, row_num)
+            if duration:
+                worksheet.update_cell(row_num, 24, duration)
+            print(f"[SHEETS] SL hit - Trade closed @ {price} | P&L: ${profit:.2f}")
+        
+        elif event == 'MANUAL_CLOSE' or event == 'CLOSED':
+            # Status (Column O = 15)
+            worksheet.update_cell(row_num, 15, 'Manually Closed')
+            # Exit Time (Column W = 23)
+            worksheet.update_cell(row_num, 23, timestamp)
+            # Profit/Loss (Column V = 22)
+            if profit != 0:
+                worksheet.update_cell(row_num, 22, f"${profit:.2f}")
+            # Final Outcome (Column U = 21)
+            if profit > 0:
+                worksheet.update_cell(row_num, 21, 'Win (Manual)')
+            elif profit < 0:
+                worksheet.update_cell(row_num, 21, 'Loss (Manual)')
+            else:
+                worksheet.update_cell(row_num, 21, 'Breakeven (Manual)')
+            # Duration (Column X = 24)
+            duration = calculate_duration(outcome, worksheet, row_num)
+            if duration:
+                worksheet.update_cell(row_num, 24, duration)
+            print(f"[SHEETS] Manual close @ {price} | P&L: ${profit:.2f}")
         
         print(f"[SHEETS] Updated {worksheet.title}: {outcome.get('trade_id')} | {event}")
         return True
@@ -255,7 +433,7 @@ def update_trade_outcome(outcome):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "2.2 - Daily Sheets Auto-Creation",
+        "version": "2.3 - Complete Update Fix",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
