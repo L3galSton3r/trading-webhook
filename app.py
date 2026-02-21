@@ -15,6 +15,7 @@ app = Flask(__name__)
 TAILSCALE_URL = os.environ.get('TAILSCALE_URL', 'https://hp-mario.tail1a7503.ts.net')
 ENABLE_GOOGLE_LOGGING = os.environ.get('ENABLE_GOOGLE_LOGGING', 'true').lower() == 'true'
 GOOGLE_SHEET_ID = os.environ.get('GOOGLE_SHEET_ID', '')
+GOOGLE_SHEET_ID_ORB = os.environ.get('GOOGLE_SHEET_ID_ORB', '')  # NEW: Separate ORB sheet
 TIMEZONE_OFFSET = 2
 
 SYMBOL_MAP = {
@@ -37,9 +38,15 @@ SYMBOL_MAP = {
 # GOOGLE SHEETS SETUP
 # ═══════════════════════════════════════════════════════════════════
 
-def get_google_spreadsheet():
-    """Get the main spreadsheet object"""
-    if not ENABLE_GOOGLE_LOGGING or not GOOGLE_SHEET_ID:
+def get_google_spreadsheet(sheet_id=None):
+    """Get a spreadsheet object by ID"""
+    if not ENABLE_GOOGLE_LOGGING:
+        return None
+    
+    if sheet_id is None:
+        sheet_id = GOOGLE_SHEET_ID
+    
+    if not sheet_id:
         return None
     
     try:
@@ -58,7 +65,7 @@ def get_google_spreadsheet():
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(credentials)
         
-        spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+        spreadsheet = client.open_by_key(sheet_id)
         
         return spreadsheet
     
@@ -66,28 +73,28 @@ def get_google_spreadsheet():
         print(f"[ERROR] Failed to connect to Google Sheets: {e}")
         return None
 
+# ═══════════════════════════════════════════════════════════════════
+# FIBO SHEET FUNCTIONS (Existing - Daily Worksheets)
+# ═══════════════════════════════════════════════════════════════════
+
 def get_or_create_daily_worksheet():
-    """Get today's worksheet or create it if it doesn't exist"""
+    """Get today's FIBO worksheet or create it if it doesn't exist"""
     try:
-        spreadsheet = get_google_spreadsheet()
+        spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID)
         if not spreadsheet:
             return None
         
-        # Get today's date in South Africa timezone (GMT+2)
         today = datetime.utcnow()
         sheet_name = today.strftime('%Y-%m-%d')
         
-        # Try to get existing worksheet
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
-            print(f"[SHEETS] Using existing sheet: {sheet_name}")
+            print(f"[SHEETS] Using existing Fibo sheet: {sheet_name}")
             return worksheet
         except gspread.exceptions.WorksheetNotFound:
-            # Create new worksheet for today
-            print(f"[SHEETS] Creating new sheet: {sheet_name}")
+            print(f"[SHEETS] Creating new Fibo sheet: {sheet_name}")
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=24)
             
-            # Add headers
             headers = [
                 'Trade ID', 'Date', 'Time', 'Symbol', 'Direction', 'Zone Type',
                 'Entry Price', 'Stop Loss', 'TP1', 'TP2', 'TP3', 'TP4',
@@ -96,53 +103,257 @@ def get_or_create_daily_worksheet():
             ]
             worksheet.append_row(headers, value_input_option='USER_ENTERED')
             
-            # Format header row
             worksheet.format('A1:X1', {
                 "backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.8},
                 "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
                 "horizontalAlignment": "CENTER"
             })
             
-            print(f"[SHEETS] New sheet created with headers: {sheet_name}")
+            print(f"[SHEETS] New Fibo sheet created: {sheet_name}")
             return worksheet
     
     except Exception as e:
-        print(f"[ERROR] Failed to get/create daily worksheet: {e}")
+        print(f"[ERROR] Failed to get/create Fibo daily worksheet: {e}")
         return None
 
 def find_trade_in_all_sheets(trade_id):
-    """Search for a trade ID across all worksheets"""
+    """Search for a trade ID across all FIBO worksheets"""
     try:
-        spreadsheet = get_google_spreadsheet()
+        spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID)
         if not spreadsheet:
             return None, None
         
-        # Get all worksheets
         worksheets = spreadsheet.worksheets()
         
-        # Search each worksheet for the trade ID
         for worksheet in worksheets:
             try:
                 cell = worksheet.find(trade_id)
                 if cell:
-                    print(f"[SHEETS] Found trade in sheet: {worksheet.title}")
+                    print(f"[SHEETS] Found Fibo trade in sheet: {worksheet.title}")
                     return worksheet, cell.row
             except:
                 continue
         
-        print(f"[WARNING] Trade ID not found in any sheet: {trade_id}")
+        print(f"[WARNING] Fibo trade ID not found in any sheet: {trade_id}")
         return None, None
     
     except Exception as e:
-        print(f"[ERROR] Failed to search for trade: {e}")
+        print(f"[ERROR] Failed to search for Fibo trade: {e}")
         return None, None
 
 # ═══════════════════════════════════════════════════════════════════
-# GOOGLE SHEETS LOGGING FUNCTIONS
+# ORB SHEET FUNCTIONS (New - Single Dedicated Sheet)
+# ═══════════════════════════════════════════════════════════════════
+
+def get_or_create_orb_worksheet():
+    """Get or create the main ORB trades worksheet"""
+    try:
+        spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID_ORB)
+        if not spreadsheet:
+            print("[WARNING] ORB Sheet ID not configured")
+            return None
+        
+        sheet_name = "ORB Trades"
+        
+        try:
+            worksheet = spreadsheet.worksheet(sheet_name)
+            print(f"[SHEETS] Using existing ORB sheet: {sheet_name}")
+            return worksheet
+        except gspread.exceptions.WorksheetNotFound:
+            print(f"[SHEETS] Creating new ORB sheet: {sheet_name}")
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=26)
+            
+            headers = [
+                'Trade ID', 'Date', 'Time', 'Symbol', 'Direction', 'Session',
+                'ORB High', 'ORB Low', 'ORB Mid', 'Entry Price', 'Stop Loss',
+                'TP1', 'TP2', 'TP3', 'Lot Size', 'Risk (pts)', 'Status',
+                'TP1 Hit', 'TP2 Hit', 'TP3 Hit', 'BE Moved',
+                'Final Outcome', 'Profit/Loss', 'R-Multiple', 'Exit Time', 'Duration'
+            ]
+            worksheet.append_row(headers, value_input_option='USER_ENTERED')
+            
+            # Format header
+            worksheet.format('A1:Z1', {
+                "backgroundColor": {"red": 0.0, "green": 0.6, "blue": 0.4},
+                "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                "horizontalAlignment": "CENTER"
+            })
+            
+            print(f"[SHEETS] New ORB sheet created with headers")
+            return worksheet
+    
+    except Exception as e:
+        print(f"[ERROR] Failed to get/create ORB worksheet: {e}")
+        return None
+
+def find_orb_trade_in_sheet(trade_id):
+    """Search for an ORB trade ID in the ORB sheet"""
+    try:
+        worksheet = get_or_create_orb_worksheet()
+        if not worksheet:
+            return None, None
+        
+        try:
+            cell = worksheet.find(trade_id)
+            if cell:
+                print(f"[SHEETS] Found ORB trade at row {cell.row}")
+                return worksheet, cell.row
+        except:
+            pass
+        
+        print(f"[WARNING] ORB trade ID not found: {trade_id}")
+        return None, None
+    
+    except Exception as e:
+        print(f"[ERROR] Failed to search for ORB trade: {e}")
+        return None, None
+
+def log_orb_entry_to_sheets(signal):
+    """Log ORB trade entry to ORB worksheet"""
+    try:
+        sheet = get_or_create_orb_worksheet()
+        if not sheet:
+            return False
+        
+        now = datetime.utcnow()
+        date_str = now.strftime('%Y-%m-%d')
+        time_str = now.strftime('%H:%M:%S')
+        
+        row = [
+            signal.get('trade_id', ''),           # A
+            date_str,                              # B
+            time_str,                              # C
+            signal.get('symbol', ''),              # D
+            signal.get('direction', ''),           # E
+            signal.get('session', ''),             # F
+            signal.get('orb_high', ''),            # G
+            signal.get('orb_low', ''),             # H
+            signal.get('orb_mid', ''),             # I
+            '',                                    # J - Entry Price (filled on ENTRY update)
+            signal.get('stop_loss', ''),           # K
+            signal.get('tp1', ''),                 # L
+            signal.get('tp2', ''),                 # M
+            signal.get('tp3', ''),                 # N
+            '',                                    # O - Lot Size (filled on ENTRY update)
+            signal.get('risk_pts', ''),            # P
+            'Active',                              # Q - Status
+            '',                                    # R - TP1 Hit
+            '',                                    # S - TP2 Hit
+            '',                                    # T - TP3 Hit
+            '',                                    # U - BE Moved
+            '',                                    # V - Final Outcome
+            '',                                    # W - Profit/Loss
+            '',                                    # X - R-Multiple
+            '',                                    # Y - Exit Time
+            '',                                    # Z - Duration
+        ]
+        
+        sheet.append_row(row, value_input_option='USER_ENTERED')
+        
+        print(f"[SHEETS] ORB entry logged: {signal.get('trade_id')}")
+        return True
+    
+    except Exception as e:
+        print(f"[ERROR] Failed to log ORB entry: {e}")
+        return False
+
+def update_orb_trade_outcome(outcome):
+    """Update ORB trade outcome"""
+    try:
+        worksheet, row_num = find_orb_trade_in_sheet(outcome.get('trade_id', ''))
+        
+        if not worksheet or not row_num:
+            print(f"[WARNING] ORB trade ID not found: {outcome.get('trade_id')}")
+            return False
+        
+        event = outcome.get('event', '')
+        price = outcome.get('price', 0)
+        profit = outcome.get('profit', 0)
+        timestamp = outcome.get('timestamp', '')
+        
+        # Always update these if provided
+        if 'lot_size' in outcome:
+            worksheet.update_cell(row_num, 15, outcome['lot_size'])  # O: Lot Size
+            print(f"[SHEETS] ORB lot size updated: {outcome['lot_size']}")
+        
+        if 'new_sl' in outcome:
+            worksheet.update_cell(row_num, 11, outcome['new_sl'])  # K: Stop Loss
+            print(f"[SHEETS] ORB SL updated: {outcome['new_sl']}")
+        
+        # Event-specific updates
+        if event == 'ENTRY':
+            worksheet.update_cell(row_num, 10, price)  # J: Entry Price
+            worksheet.update_cell(row_num, 17, 'Active')  # Q: Status
+            print(f"[SHEETS] ORB entry logged @ {price}")
+        
+        elif event == 'TP1_HIT':
+            worksheet.update_cell(row_num, 17, 'TP1 Hit - Partial')  # Q: Status
+            worksheet.update_cell(row_num, 18, f"{timestamp} @ {price}")  # R: TP1 Hit
+            print(f"[SHEETS] ORB TP1 hit @ {price}")
+        
+        elif event == 'TP2_HIT':
+            worksheet.update_cell(row_num, 17, 'TP2 Hit - Partial')  # Q: Status
+            worksheet.update_cell(row_num, 19, f"{timestamp} @ {price}")  # S: TP2 Hit
+            print(f"[SHEETS] ORB TP2 hit @ {price}")
+        
+        elif event == 'TP3_HIT':
+            worksheet.update_cell(row_num, 17, 'TP3 Hit - Closed')  # Q: Status
+            worksheet.update_cell(row_num, 20, f"{timestamp} @ {price}")  # T: TP3 Hit
+            worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
+            worksheet.update_cell(row_num, 22, 'Win')  # V: Final Outcome
+            if profit != 0:
+                worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
+            duration = calculate_duration(outcome, worksheet, row_num, 2, 3)
+            if duration:
+                worksheet.update_cell(row_num, 26, duration)  # Z: Duration
+            print(f"[SHEETS] ORB TP3 hit - Trade closed @ {price}")
+        
+        elif event == 'BE_MOVED':
+            worksheet.update_cell(row_num, 21, f"Yes @ {timestamp}")  # U: BE Moved
+            if 'be_price' in outcome:
+                worksheet.update_cell(row_num, 11, outcome['be_price'])  # K: Stop Loss
+                print(f"[SHEETS] ORB BE moved - SL updated to {outcome['be_price']}")
+            elif 'entry_price' in outcome:
+                worksheet.update_cell(row_num, 11, outcome['entry_price'])
+                print(f"[SHEETS] ORB BE moved - SL updated to entry")
+            elif price != 0:
+                worksheet.update_cell(row_num, 11, price)
+                print(f"[SHEETS] ORB BE moved - SL updated to {price}")
+        
+        elif event == 'SL_HIT':
+            worksheet.update_cell(row_num, 17, 'SL Hit - Closed')  # Q: Status
+            worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
+            if price != 0:
+                worksheet.update_cell(row_num, 11, price)  # K: Actual exit price
+            if profit != 0:
+                worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
+            r_multiple = outcome.get('r_multiple', 0)
+            if r_multiple != 0:
+                worksheet.update_cell(row_num, 24, f"{r_multiple:+.2f}R")  # X: R-Multiple
+                worksheet.update_cell(row_num, 22, f"{r_multiple:+.2f}R")  # V: Final Outcome
+            else:
+                if profit == 0 or (profit > -1 and profit < 1):
+                    worksheet.update_cell(row_num, 22, 'Breakeven')
+                else:
+                    worksheet.update_cell(row_num, 22, 'Loss')
+            duration = calculate_duration(outcome, worksheet, row_num, 2, 3)
+            if duration:
+                worksheet.update_cell(row_num, 26, duration)  # Z: Duration
+            print(f"[SHEETS] ORB SL hit - Trade closed @ {price}")
+        
+        print(f"[SHEETS] ORB updated: {outcome.get('trade_id')} | {event}")
+        return True
+    
+    except Exception as e:
+        print(f"[ERROR] Failed to update ORB outcome: {e}")
+        return False
+
+# ═══════════════════════════════════════════════════════════════════
+# FIBO LOGGING FUNCTIONS (Existing)
 # ═══════════════════════════════════════════════════════════════════
 
 def log_entry_to_sheets(signal):
-    """Log trade entry to today's worksheet"""
+    """Log FIBO trade entry to today's worksheet"""
     try:
         sheet = get_or_create_daily_worksheet()
         if not sheet:
@@ -152,7 +363,6 @@ def log_entry_to_sheets(signal):
         date_str = now.strftime('%Y-%m-%d')
         time_str = now.strftime('%H:%M:%S')
         
-        # Determine risk based on zone type (update these values to match your EA)
         risk_percent = 2.0 if signal.get('zone_type') == 'MAJOR' else 0.5
         
         row = [
@@ -184,38 +394,33 @@ def log_entry_to_sheets(signal):
         
         sheet.append_row(row, value_input_option='USER_ENTERED')
         
-        print(f"[SHEETS] Entry logged to {sheet.title}: {signal.get('trade_id')}")
+        print(f"[SHEETS] Fibo entry logged to {sheet.title}: {signal.get('trade_id')}")
         return True
     
     except Exception as e:
-        print(f"[ERROR] Failed to log entry: {e}")
+        print(f"[ERROR] Failed to log Fibo entry: {e}")
         return False
 
-def calculate_duration(outcome, worksheet, row_num):
+def calculate_duration(outcome, worksheet, row_num, date_col=2, time_col=3):
     """Calculate trade duration from entry to exit"""
     try:
         timestamp = outcome.get('timestamp', '')
         
-        # Try to get entry time from outcome
         if 'entry_time' in outcome:
             entry_time_str = outcome['entry_time']
         else:
-            # Get entry time from sheet (Column C = 3 for Time, Column B = 2 for Date)
-            entry_date = worksheet.cell(row_num, 2).value  # Date
-            entry_time = worksheet.cell(row_num, 3).value  # Time
+            entry_date = worksheet.cell(row_num, date_col).value
+            entry_time = worksheet.cell(row_num, time_col).value
             if entry_date and entry_time:
                 entry_time_str = f"{entry_date} {entry_time}"
             else:
                 return None
         
-        # Parse timestamps
-        # Handle different formats
         for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%H:%M:%S']:
             try:
                 if 'T' in entry_time_str or '-' in entry_time_str:
                     entry_dt = datetime.strptime(entry_time_str, fmt)
                 else:
-                    # If only time, use today's date
                     entry_dt = datetime.strptime(entry_time_str, '%H:%M:%S')
                 break
             except:
@@ -235,10 +440,8 @@ def calculate_duration(outcome, worksheet, row_num):
         else:
             return None
         
-        # Calculate duration
         duration = exit_dt - entry_dt
         
-        # Format nicely
         total_seconds = int(duration.total_seconds())
         if total_seconds < 0:
             total_seconds = abs(total_seconds)
@@ -260,13 +463,12 @@ def calculate_duration(outcome, worksheet, row_num):
         return None
 
 def update_trade_outcome(outcome):
-    """Update trade outcome across all worksheets"""
+    """Update FIBO trade outcome across all worksheets"""
     try:
-        # Find the trade in any worksheet
         worksheet, row_num = find_trade_in_all_sheets(outcome.get('trade_id', ''))
         
         if not worksheet or not row_num:
-            print(f"[WARNING] Trade ID not found: {outcome.get('trade_id')}")
+            print(f"[WARNING] Fibo trade ID not found: {outcome.get('trade_id')}")
             return False
         
         event = outcome.get('event', '')
@@ -274,16 +476,10 @@ def update_trade_outcome(outcome):
         profit = outcome.get('profit', 0)
         timestamp = outcome.get('timestamp', '')
         
-        # ═══════════════════════════════════════════════════════════════
-        # ALWAYS UPDATE THESE IF PROVIDED (regardless of event type)
-        # ═══════════════════════════════════════════════════════════════
-        
-        # Lot Size (Column M = 13) - CRITICAL for accurate P&L
         if 'lot_size' in outcome:
             worksheet.update_cell(row_num, 13, outcome['lot_size'])
             print(f"[SHEETS] Lot size updated: {outcome['lot_size']}")
         
-        # Stop Loss (Column H = 8) - Update if SL was modified
         if 'new_sl' in outcome:
             worksheet.update_cell(row_num, 8, outcome['new_sl'])
             print(f"[SHEETS] SL updated: {outcome['new_sl']}")
@@ -292,78 +488,51 @@ def update_trade_outcome(outcome):
         elif 'sl' in outcome:
             worksheet.update_cell(row_num, 8, outcome['sl'])
         
-        # ═══════════════════════════════════════════════════════════════
-        # EVENT-SPECIFIC UPDATES
-        # ═══════════════════════════════════════════════════════════════
-        
         if event == 'ENTRY':
-            # Entry Price (Column G = 7)
             worksheet.update_cell(row_num, 7, price)
-            # Status (Column O = 15)
             worksheet.update_cell(row_num, 15, 'Active')
             print(f"[SHEETS] Entry logged @ {price}")
         
         elif event == 'TP1_HIT':
-            # Status (Column O = 15)
             worksheet.update_cell(row_num, 15, 'TP1 Hit - Partial')
-            # TP1 Hit (Column P = 16)
             worksheet.update_cell(row_num, 16, f"{timestamp} @ {price}")
-            # Partial profit if provided
-            if profit != 0:
-                current_pnl = worksheet.cell(row_num, 22).value or "$0.00"
-                # You could accumulate partial profits here if needed
             print(f"[SHEETS] TP1 hit @ {price}")
         
         elif event == 'TP2_HIT':
-            # Status (Column O = 15)
             worksheet.update_cell(row_num, 15, 'TP2 Hit - Partial')
-            # TP2 Hit (Column Q = 17)
             worksheet.update_cell(row_num, 17, f"{timestamp} @ {price}")
             print(f"[SHEETS] TP2 hit @ {price}")
         
         elif event == 'TP3_HIT':
-            # Status (Column O = 15)
             worksheet.update_cell(row_num, 15, 'TP3 Hit - Partial')
-            # TP3 Hit (Column R = 18)
             worksheet.update_cell(row_num, 18, f"{timestamp} @ {price}")
             print(f"[SHEETS] TP3 hit @ {price}")
         
         elif event == 'TP4_HIT':
-            # Status (Column O = 15)
             worksheet.update_cell(row_num, 15, 'TP4 Hit - Closed')
-            # TP4 Hit (Column S = 19)
             worksheet.update_cell(row_num, 19, f"{timestamp} @ {price}")
-            # Exit Time (Column W = 23)
             worksheet.update_cell(row_num, 23, timestamp)
-            # Final Outcome (Column U = 21)
             worksheet.update_cell(row_num, 21, 'Win')
-            # Profit/Loss (Column V = 22)
             if profit != 0:
                 worksheet.update_cell(row_num, 22, f"${profit:.2f}")
-            # Duration (Column X = 24)
             duration = calculate_duration(outcome, worksheet, row_num)
             if duration:
                 worksheet.update_cell(row_num, 24, duration)
-            print(f"[SHEETS] TP4 hit - Trade closed @ {price} | Profit: ${profit:.2f}")
+            print(f"[SHEETS] TP4 hit - Trade closed @ {price}")
         
         elif event == 'BE_MOVED':
-            # BE Moved (Column T = 20)
             worksheet.update_cell(row_num, 20, f"Yes @ {timestamp}")
-            # Update Stop Loss to BE price (Column H = 8)
             if 'be_price' in outcome:
                 worksheet.update_cell(row_num, 8, outcome['be_price'])
                 print(f"[SHEETS] BE moved - SL updated to {outcome['be_price']}")
             elif 'entry_price' in outcome:
                 worksheet.update_cell(row_num, 8, outcome['entry_price'])
-                print(f"[SHEETS] BE moved - SL updated to entry {outcome['entry_price']}")
+                print(f"[SHEETS] BE moved - SL updated to entry")
             elif price != 0:
                 worksheet.update_cell(row_num, 8, price)
                 print(f"[SHEETS] BE moved - SL updated to {price}")
-            else:
-                print(f"[SHEETS] BE moved @ {timestamp} (no price provided)")
         
         elif event == 'SL_TRAILED' or event == 'TRAIL_MOVED':
-            # Update Stop Loss to new trailed price (Column H = 8)
             if 'new_sl' in outcome:
                 worksheet.update_cell(row_num, 8, outcome['new_sl'])
                 print(f"[SHEETS] SL trailed to {outcome['new_sl']}")
@@ -372,58 +541,46 @@ def update_trade_outcome(outcome):
                 print(f"[SHEETS] SL trailed to {price}")
         
         elif event == 'SL_HIT':
-            # Status (Column O = 15)
             worksheet.update_cell(row_num, 15, 'SL Hit - Closed')
-            # Exit Time (Column W = 23)
             worksheet.update_cell(row_num, 23, timestamp)
-            # Exit Price / Actual SL (Column H = 8) - where it actually closed
             if price != 0:
                 worksheet.update_cell(row_num, 8, price)
-            # Profit/Loss (Column V = 22)
             if profit != 0:
                 worksheet.update_cell(row_num, 22, f"${profit:.2f}")
-            # Final Outcome (Column U = 21)
             r_multiple = outcome.get('r_multiple', 0)
             if r_multiple != 0:
                 worksheet.update_cell(row_num, 21, f"{r_multiple:+.2f}R")
             else:
-                # Determine if it was BE or Loss
                 if profit == 0 or (profit > -1 and profit < 1):
                     worksheet.update_cell(row_num, 21, 'Breakeven')
                 else:
                     worksheet.update_cell(row_num, 21, 'Loss')
-            # Duration (Column X = 24)
             duration = calculate_duration(outcome, worksheet, row_num)
             if duration:
                 worksheet.update_cell(row_num, 24, duration)
-            print(f"[SHEETS] SL hit - Trade closed @ {price} | P&L: ${profit:.2f}")
+            print(f"[SHEETS] SL hit - Trade closed @ {price}")
         
         elif event == 'MANUAL_CLOSE' or event == 'CLOSED':
-            # Status (Column O = 15)
             worksheet.update_cell(row_num, 15, 'Manually Closed')
-            # Exit Time (Column W = 23)
             worksheet.update_cell(row_num, 23, timestamp)
-            # Profit/Loss (Column V = 22)
             if profit != 0:
                 worksheet.update_cell(row_num, 22, f"${profit:.2f}")
-            # Final Outcome (Column U = 21)
             if profit > 0:
                 worksheet.update_cell(row_num, 21, 'Win (Manual)')
             elif profit < 0:
                 worksheet.update_cell(row_num, 21, 'Loss (Manual)')
             else:
                 worksheet.update_cell(row_num, 21, 'Breakeven (Manual)')
-            # Duration (Column X = 24)
             duration = calculate_duration(outcome, worksheet, row_num)
             if duration:
                 worksheet.update_cell(row_num, 24, duration)
-            print(f"[SHEETS] Manual close @ {price} | P&L: ${profit:.2f}")
+            print(f"[SHEETS] Manual close @ {price}")
         
         print(f"[SHEETS] Updated {worksheet.title}: {outcome.get('trade_id')} | {event}")
         return True
     
     except Exception as e:
-        print(f"[ERROR] Failed to update outcome: {e}")
+        print(f"[ERROR] Failed to update Fibo outcome: {e}")
         return False
 
 # ═══════════════════════════════════════════════════════════════════
@@ -434,15 +591,18 @@ def update_trade_outcome(outcome):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "2.3 - Complete Update Fix",
+        "version": "2.4 - Separate ORB Sheet Support",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
             "update": "/update",
+            "orb_update": "/orb_update",
             "health": "/health"
         },
         "forwards_to": TAILSCALE_URL,
         "google_logging": ENABLE_GOOGLE_LOGGING,
+        "fibo_sheet_id": GOOGLE_SHEET_ID if GOOGLE_SHEET_ID else "Not configured",
+        "orb_sheet_id": GOOGLE_SHEET_ID_ORB if GOOGLE_SHEET_ID_ORB else "Not configured",
         "symbol_mappings": len(SYMBOL_MAP)
     })
 
@@ -497,6 +657,10 @@ def orb_webhook():
             if original_symbol != data['symbol']:
                 print(f"[ORB] Symbol mapped: {original_symbol} → {data['symbol']}")
         
+        # NEW: Log ORB to dedicated sheet
+        if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
+            log_orb_entry_to_sheets(data)
+        
         try:
             response = requests.post(
                 f"{TAILSCALE_URL}/orb",
@@ -507,7 +671,7 @@ def orb_webhook():
         except Exception as e:
             print(f"[ERROR] Failed to forward: {e}")
         
-        return jsonify({"status": "success", "forwarded": True})
+        return jsonify({"status": "success", "forwarded": True, "logged": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB)})
     
     except Exception as e:
         print(f"[ERROR] /orb error: {e}")
@@ -515,6 +679,7 @@ def orb_webhook():
 
 @app.route('/update', methods=['POST'])
 def update_webhook():
+    """Update endpoint for FIBO trades"""
     try:
         data = request.get_json()
         
@@ -532,11 +697,32 @@ def update_webhook():
         print(f"[ERROR] /update error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/orb_update', methods=['POST'])
+def orb_update_webhook():
+    """Update endpoint for ORB trades"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"status": "error", "message": "No data received"}), 400
+        
+        print(f"[ORB_UPDATE] Received: {data.get('event', 'Unknown')} for {data.get('trade_id', 'Unknown')}")
+        
+        if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
+            update_orb_trade_outcome(data)
+        
+        return jsonify({"status": "success", "logged": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB)})
+    
+    except Exception as e:
+        print(f"[ERROR] /orb_update error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
         "status": "running",
-        "google_sheets": ENABLE_GOOGLE_LOGGING,
+        "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
+        "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "timestamp": datetime.utcnow().isoformat()
     })
 
