@@ -142,27 +142,32 @@ def find_trade_in_all_sheets(trade_id):
         return None, None
 
 # ═══════════════════════════════════════════════════════════════════
-# ORB SHEET FUNCTIONS (New - Single Dedicated Sheet)
+# ORB SHEET FUNCTIONS (Daily Worksheets - Same as Fibo)
 # ═══════════════════════════════════════════════════════════════════
 
-def get_or_create_orb_worksheet():
-    """Get or create the main ORB trades worksheet"""
+def get_or_create_orb_daily_worksheet():
+    """Get today's ORB worksheet or create it if it doesn't exist"""
     try:
         spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID_ORB)
         if not spreadsheet:
             print("[WARNING] ORB Sheet ID not configured")
             return None
         
-        sheet_name = "ORB Trades"
+        # Get today's date
+        today = datetime.utcnow()
+        sheet_name = today.strftime('%Y-%m-%d')
         
+        # Try to get existing worksheet
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
             print(f"[SHEETS] Using existing ORB sheet: {sheet_name}")
             return worksheet
         except gspread.exceptions.WorksheetNotFound:
+            # Create new worksheet for today
             print(f"[SHEETS] Creating new ORB sheet: {sheet_name}")
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=26)
             
+            # Add headers
             headers = [
                 'Trade ID', 'Date', 'Time', 'Symbol', 'Direction', 'Session',
                 'ORB High', 'ORB Low', 'ORB Mid', 'Entry Price', 'Stop Loss',
@@ -172,36 +177,41 @@ def get_or_create_orb_worksheet():
             ]
             worksheet.append_row(headers, value_input_option='USER_ENTERED')
             
-            # Format header
+            # Format header row (green theme for ORB)
             worksheet.format('A1:Z1', {
                 "backgroundColor": {"red": 0.0, "green": 0.6, "blue": 0.4},
                 "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
                 "horizontalAlignment": "CENTER"
             })
             
-            print(f"[SHEETS] New ORB sheet created with headers")
+            print(f"[SHEETS] New ORB sheet created with headers: {sheet_name}")
             return worksheet
     
     except Exception as e:
-        print(f"[ERROR] Failed to get/create ORB worksheet: {e}")
+        print(f"[ERROR] Failed to get/create ORB daily worksheet: {e}")
         return None
 
-def find_orb_trade_in_sheet(trade_id):
-    """Search for an ORB trade ID in the ORB sheet"""
+def find_orb_trade_in_all_sheets(trade_id):
+    """Search for an ORB trade ID across all worksheets"""
     try:
-        worksheet = get_or_create_orb_worksheet()
-        if not worksheet:
+        spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID_ORB)
+        if not spreadsheet:
             return None, None
         
-        try:
-            cell = worksheet.find(trade_id)
-            if cell:
-                print(f"[SHEETS] Found ORB trade at row {cell.row}")
-                return worksheet, cell.row
-        except:
-            pass
+        # Get all worksheets
+        worksheets = spreadsheet.worksheets()
         
-        print(f"[WARNING] ORB trade ID not found: {trade_id}")
+        # Search each worksheet for the trade ID
+        for worksheet in worksheets:
+            try:
+                cell = worksheet.find(trade_id)
+                if cell:
+                    print(f"[SHEETS] Found ORB trade in sheet: {worksheet.title}")
+                    return worksheet, cell.row
+            except:
+                continue
+        
+        print(f"[WARNING] ORB trade ID not found in any sheet: {trade_id}")
         return None, None
     
     except Exception as e:
@@ -209,9 +219,9 @@ def find_orb_trade_in_sheet(trade_id):
         return None, None
 
 def log_orb_entry_to_sheets(signal):
-    """Log ORB trade entry to ORB worksheet"""
+    """Log ORB trade entry to today's worksheet"""
     try:
-        sheet = get_or_create_orb_worksheet()
+        sheet = get_or_create_orb_daily_worksheet()
         if not sheet:
             return False
         
@@ -250,7 +260,7 @@ def log_orb_entry_to_sheets(signal):
         
         sheet.append_row(row, value_input_option='USER_ENTERED')
         
-        print(f"[SHEETS] ORB entry logged: {signal.get('trade_id')}")
+        print(f"[SHEETS] ORB entry logged to {sheet.title}: {signal.get('trade_id')}")
         return True
     
     except Exception as e:
@@ -258,9 +268,10 @@ def log_orb_entry_to_sheets(signal):
         return False
 
 def update_orb_trade_outcome(outcome):
-    """Update ORB trade outcome"""
+    """Update ORB trade outcome across all worksheets"""
     try:
-        worksheet, row_num = find_orb_trade_in_sheet(outcome.get('trade_id', ''))
+        # Find the trade in any worksheet
+        worksheet, row_num = find_orb_trade_in_all_sheets(outcome.get('trade_id', ''))
         
         if not worksheet or not row_num:
             print(f"[WARNING] ORB trade ID not found: {outcome.get('trade_id')}")
@@ -271,7 +282,7 @@ def update_orb_trade_outcome(outcome):
         profit = outcome.get('profit', 0)
         timestamp = outcome.get('timestamp', '')
         
-        # Always update these if provided
+        # Always update these if provided (regardless of event type)
         if 'lot_size' in outcome:
             worksheet.update_cell(row_num, 15, outcome['lot_size'])  # O: Lot Size
             print(f"[SHEETS] ORB lot size updated: {outcome['lot_size']}")
@@ -279,6 +290,10 @@ def update_orb_trade_outcome(outcome):
         if 'new_sl' in outcome:
             worksheet.update_cell(row_num, 11, outcome['new_sl'])  # K: Stop Loss
             print(f"[SHEETS] ORB SL updated: {outcome['new_sl']}")
+        elif 'stop_loss' in outcome:
+            worksheet.update_cell(row_num, 11, outcome['stop_loss'])
+        elif 'sl' in outcome:
+            worksheet.update_cell(row_num, 11, outcome['sl'])
         
         # Event-specific updates
         if event == 'ENTRY':
@@ -320,6 +335,14 @@ def update_orb_trade_outcome(outcome):
                 worksheet.update_cell(row_num, 11, price)
                 print(f"[SHEETS] ORB BE moved - SL updated to {price}")
         
+        elif event == 'SL_TRAILED' or event == 'TRAIL_MOVED':
+            if 'new_sl' in outcome:
+                worksheet.update_cell(row_num, 11, outcome['new_sl'])
+                print(f"[SHEETS] ORB SL trailed to {outcome['new_sl']}")
+            elif price != 0:
+                worksheet.update_cell(row_num, 11, price)
+                print(f"[SHEETS] ORB SL trailed to {price}")
+        
         elif event == 'SL_HIT':
             worksheet.update_cell(row_num, 17, 'SL Hit - Closed')  # Q: Status
             worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
@@ -341,7 +364,23 @@ def update_orb_trade_outcome(outcome):
                 worksheet.update_cell(row_num, 26, duration)  # Z: Duration
             print(f"[SHEETS] ORB SL hit - Trade closed @ {price}")
         
-        print(f"[SHEETS] ORB updated: {outcome.get('trade_id')} | {event}")
+        elif event == 'MANUAL_CLOSE' or event == 'CLOSED':
+            worksheet.update_cell(row_num, 17, 'Manually Closed')  # Q: Status
+            worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
+            if profit != 0:
+                worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
+            if profit > 0:
+                worksheet.update_cell(row_num, 22, 'Win (Manual)')  # V: Final Outcome
+            elif profit < 0:
+                worksheet.update_cell(row_num, 22, 'Loss (Manual)')
+            else:
+                worksheet.update_cell(row_num, 22, 'Breakeven (Manual)')
+            duration = calculate_duration(outcome, worksheet, row_num, 2, 3)
+            if duration:
+                worksheet.update_cell(row_num, 26, duration)  # Z: Duration
+            print(f"[SHEETS] ORB manual close @ {price}")
+        
+        print(f"[SHEETS] ORB updated {worksheet.title}: {outcome.get('trade_id')} | {event}")
         return True
     
     except Exception as e:
@@ -591,7 +630,7 @@ def update_trade_outcome(outcome):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "2.4 - Separate ORB Sheet Support",
+        "version": "2.4 - Daily ORB Sheet Support",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
@@ -657,7 +696,7 @@ def orb_webhook():
             if original_symbol != data['symbol']:
                 print(f"[ORB] Symbol mapped: {original_symbol} → {data['symbol']}")
         
-        # NEW: Log ORB to dedicated sheet
+        # Log ORB to dedicated sheet with daily tabs
         if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
             log_orb_entry_to_sheets(data)
         
