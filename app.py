@@ -15,7 +15,7 @@ app = Flask(__name__)
 TAILSCALE_URL = os.environ.get('TAILSCALE_URL', 'https://hp-mario.tail1a7503.ts.net')
 ENABLE_GOOGLE_LOGGING = os.environ.get('ENABLE_GOOGLE_LOGGING', 'true').lower() == 'true'
 GOOGLE_SHEET_ID = os.environ.get('GOOGLE_SHEET_ID', '')
-GOOGLE_SHEET_ID_ORB = os.environ.get('GOOGLE_SHEET_ID_ORB', '')  # NEW: Separate ORB sheet
+GOOGLE_SHEET_ID_ORB = os.environ.get('GOOGLE_SHEET_ID_ORB', '')
 TIMEZONE_OFFSET = 2
 
 SYMBOL_MAP = {
@@ -72,6 +72,58 @@ def get_google_spreadsheet(sheet_id=None):
     except Exception as e:
         print(f"[ERROR] Failed to connect to Google Sheets: {e}")
         return None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DURATION CALCULATION HELPER (FIXED)
+# ═══════════════════════════════════════════════════════════════════
+
+def calculate_duration_from_times(entry_time_str, exit_time_str):
+    """Calculate duration between two timestamps"""
+    try:
+        # Parse entry time
+        entry_dt = None
+        exit_dt = None
+        
+        # Try different formats for entry
+        for fmt in ['%Y-%m-%d %H:%M:%S', '%Y.%m.%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S']:
+            try:
+                entry_dt = datetime.strptime(entry_time_str, fmt)
+                break
+            except:
+                continue
+        
+        # Try different formats for exit
+        for fmt in ['%Y-%m-%d %H:%M:%S', '%Y.%m.%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S']:
+            try:
+                exit_dt = datetime.strptime(exit_time_str, fmt)
+                break
+            except:
+                continue
+        
+        if not entry_dt or not exit_dt:
+            print(f"[WARNING] Could not parse times: entry={entry_time_str}, exit={exit_time_str}")
+            return None
+        
+        duration = exit_dt - entry_dt
+        total_seconds = int(abs(duration.total_seconds()))
+        
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        if hours > 24:
+            days = hours // 24
+            hours = hours % 24
+            return f"{days}d {hours}h {minutes}m"
+        elif hours > 0:
+            return f"{hours}h {minutes}m {seconds}s"
+        else:
+            return f"{minutes}m {seconds}s"
+    
+    except Exception as e:
+        print(f"[WARNING] Duration calculation error: {e}")
+        return None
+
 
 # ═══════════════════════════════════════════════════════════════════
 # FIBO SHEET FUNCTIONS (Existing - Daily Worksheets)
@@ -141,8 +193,9 @@ def find_trade_in_all_sheets(trade_id):
         print(f"[ERROR] Failed to search for Fibo trade: {e}")
         return None, None
 
+
 # ═══════════════════════════════════════════════════════════════════
-# ORB SHEET FUNCTIONS (Daily Worksheets - Same as Fibo)
+# ORB SHEET FUNCTIONS (FIXED - With Duration & Accurate PnL)
 # ═══════════════════════════════════════════════════════════════════
 
 def get_or_create_orb_daily_worksheet():
@@ -153,32 +206,52 @@ def get_or_create_orb_daily_worksheet():
             print("[WARNING] ORB Sheet ID not configured")
             return None
         
-        # Get today's date
         today = datetime.utcnow()
         sheet_name = today.strftime('%Y-%m-%d')
         
-        # Try to get existing worksheet
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
             print(f"[SHEETS] Using existing ORB sheet: {sheet_name}")
             return worksheet
         except gspread.exceptions.WorksheetNotFound:
-            # Create new worksheet for today
             print(f"[SHEETS] Creating new ORB sheet: {sheet_name}")
-            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=26)
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=30)
             
-            # Add headers
+            # Updated headers with Commission, Swap, Net PnL columns
             headers = [
-                'Trade ID', 'Date', 'Time', 'Symbol', 'Direction', 'Session',
-                'ORB High', 'ORB Low', 'ORB Mid', 'Entry Price', 'Stop Loss',
-                'TP1', 'TP2', 'TP3', 'Lot Size', 'Risk (pts)', 'Status',
-                'TP1 Hit', 'TP2 Hit', 'TP3 Hit', 'BE Moved',
-                'Final Outcome', 'Profit/Loss', 'R-Multiple', 'Exit Time', 'Duration'
+                'Trade ID',       # A
+                'Date',           # B
+                'Time',           # C
+                'Symbol',         # D
+                'Direction',      # E
+                'Session',        # F
+                'ORB High',       # G
+                'ORB Low',        # H
+                'ORB Mid',        # I
+                'Entry Price',    # J
+                'Stop Loss',      # K
+                'TP1',            # L
+                'TP2',            # M
+                'TP3',            # N
+                'Lot Size',       # O
+                'Risk (pts)',     # P
+                'Status',         # Q
+                'TP1 Hit',        # R
+                'TP2 Hit',        # S
+                'TP3 Hit',        # T
+                'BE Moved',       # U
+                'Final Outcome',  # V
+                'Gross P/L',      # W - Raw profit
+                'Commission',     # X - Commission (negative)
+                'Swap',           # Y - Swap charges
+                'Net P/L',        # Z - profit + commission + swap
+                'Cumulative',     # AA - Running total for setup
+                'Exit Time',      # AB
+                'Duration'        # AC
             ]
             worksheet.append_row(headers, value_input_option='USER_ENTERED')
             
-            # Format header row (green theme for ORB)
-            worksheet.format('A1:Z1', {
+            worksheet.format('A1:AC1', {
                 "backgroundColor": {"red": 0.0, "green": 0.6, "blue": 0.4},
                 "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
                 "horizontalAlignment": "CENTER"
@@ -198,10 +271,23 @@ def find_orb_trade_in_all_sheets(trade_id):
         if not spreadsheet:
             return None, None
         
-        # Get all worksheets
         worksheets = spreadsheet.worksheets()
         
-        # Search each worksheet for the trade ID
+        for worksheet in worksheets:
+            try:
+                cell = worksheet.find(trade_id)
+                if cell:
+                    print(f"[SHEETS] Found ORB
+
+def find_orb_trade_in_all_sheets(trade_id):
+    """Search for an ORB trade ID across all worksheets"""
+    try:
+        spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID_ORB)
+        if not spreadsheet:
+            return None, None
+        
+        worksheets = spreadsheet.worksheets()
+        
         for worksheet in worksheets:
             try:
                 cell = worksheet.find(trade_id)
@@ -271,16 +357,19 @@ def log_orb_entry_to_sheets(signal):
             signal.get('tp3', ''),                 # N
             '',                                    # O - Lot Size (filled on LAYER_FILLED)
             signal.get('risk_pts', ''),            # P
-            'Pending',                             # Q - Status (waiting for layers)
+            'Pending',                             # Q - Status
             '',                                    # R - TP1 Hit
             '',                                    # S - TP2 Hit
             '',                                    # T - TP3 Hit
             '',                                    # U - BE Moved
             '',                                    # V - Final Outcome
-            '',                                    # W - Profit/Loss
-            '',                                    # X - R-Multiple
-            '',                                    # Y - Exit Time
-            '',                                    # Z - Duration
+            '',                                    # W - Gross P/L
+            '',                                    # X - Commission
+            '',                                    # Y - Swap
+            '',                                    # Z - Net P/L
+            '',                                    # AA - Cumulative
+            '',                                    # AB - Exit Time
+            '',                                    # AC - Duration
         ]
         
         sheet.append_row(row, value_input_option='USER_ENTERED')
@@ -293,12 +382,17 @@ def log_orb_entry_to_sheets(signal):
         return False
 
 def update_orb_trade_outcome(outcome):
-    """Update ORB trade outcome - LAYER_FILLED creates new rows, other events update all matching rows"""
+    """Update ORB trade outcome - FIXED with accurate PnL and duration"""
     try:
         event = outcome.get('event', '')
         trade_id = outcome.get('trade_id', '')
         price = outcome.get('price', 0)
         profit = outcome.get('profit', 0)
+        commission = outcome.get('commission', 0)
+        swap = outcome.get('swap', 0)
+        net_pnl = outcome.get('net_pnl', profit + commission + swap)
+        cumulative_pnl = outcome.get('cumulative_pnl', 0)
+        entry_time = outcome.get('entry_time', '')
         timestamp = outcome.get('timestamp', '')
         
         # Parse timestamp
@@ -316,6 +410,11 @@ def update_orb_trade_outcome(outcome):
             date_str = now.strftime('%Y-%m-%d')
             time_str = now.strftime('%H:%M:%S')
         
+        # Calculate duration if entry_time provided
+        duration = None
+        if entry_time and timestamp:
+            duration = calculate_duration_from_times(entry_time, timestamp)
+        
         # ═══════════════════════════════════════════════════════════════
         # LAYER_FILLED - Creates a NEW row for each layer
         # ═══════════════════════════════════════════════════════════════
@@ -331,71 +430,64 @@ def update_orb_trade_outcome(outcome):
             
             if original_worksheet and original_row:
                 # Get data from original row
-                symbol = original_worksheet.cell(original_row, 4).value  # D: Symbol
-                direction = original_worksheet.cell(original_row, 5).value  # E: Direction
-                session = original_worksheet.cell(original_row, 6).value  # F: Session
-                orb_high = original_worksheet.cell(original_row, 7).value  # G: ORB High
-                orb_low = original_worksheet.cell(original_row, 8).value  # H: ORB Low
-                orb_mid = original_worksheet.cell(original_row, 9).value  # I: ORB Mid
-                stop_loss = original_worksheet.cell(original_row, 11).value  # K: Stop Loss
-                tp1 = original_worksheet.cell(original_row, 12).value  # L: TP1
-                tp2 = original_worksheet.cell(original_row, 13).value  # M: TP2
-                tp3 = original_worksheet.cell(original_row, 14).value  # N: TP3
-                risk_pts = original_worksheet.cell(original_row, 16).value  # P: Risk pts
+                symbol = original_worksheet.cell(original_row, 4).value      # D
+                direction = original_worksheet.cell(original_row, 5).value   # E
+                session = original_worksheet.cell(original_row, 6).value     # F
+                orb_high = original_worksheet.cell(original_row, 7).value    # G
+                orb_low = original_worksheet.cell(original_row, 8).value     # H
+                orb_mid = original_worksheet.cell(original_row, 9).value     # I
+                stop_loss = original_worksheet.cell(original_row, 11).value  # K
+                tp1 = original_worksheet.cell(original_row, 12).value        # L
+                tp2 = original_worksheet.cell(original_row, 13).value        # M
+                tp3 = original_worksheet.cell(original_row, 14).value        # N
+                risk_pts = original_worksheet.cell(original_row, 16).value   # P
                 
-                # Update original row status to show it's active now
+                # Update original row status
                 original_worksheet.update_cell(original_row, 17, 'Active - Layering')
             else:
-                # Fallback if original not found
-                symbol = ""
-                direction = ""
-                session = ""
-                orb_high = ""
-                orb_low = ""
-                orb_mid = ""
-                stop_loss = ""
-                tp1 = ""
-                tp2 = ""
-                tp3 = ""
-                risk_pts = ""
+                symbol = direction = session = ""
+                orb_high = orb_low = orb_mid = ""
+                stop_loss = tp1 = tp2 = tp3 = risk_pts = ""
             
             # Create new row for this layer
             row = [
-                trade_id,                              # A: Trade ID
-                date_str,                              # B: Date
-                time_str,                              # C: Time
-                symbol,                                # D: Symbol
-                direction,                             # E: Direction
-                session,                               # F: Session
-                orb_high,                              # G: ORB High
-                orb_low,                               # H: ORB Low
-                orb_mid,                               # I: ORB Mid
-                price,                                 # J: Entry Price (THIS LAYER)
-                stop_loss,                             # K: Stop Loss
-                tp1,                                   # L: TP1
-                tp2,                                   # M: TP2
-                tp3,                                   # N: TP3
-                lot_size,                              # O: Lot Size (THIS LAYER)
-                risk_pts,                              # P: Risk pts
-                'Active',                              # Q: Status
-                '',                                    # R: TP1 Hit
-                '',                                    # S: TP2 Hit
-                '',                                    # T: TP3 Hit
-                '',                                    # U: BE Moved
-                '',                                    # V: Final Outcome
-                '',                                    # W: Profit/Loss
-                '',                                    # X: R-Multiple
-                '',                                    # Y: Exit Time
-                '',                                    # Z: Duration
+                trade_id,          # A
+                date_str,          # B
+                time_str,          # C
+                symbol,            # D
+                direction,         # E
+                session,           # F
+                orb_high,          # G
+                orb_low,           # H
+                orb_mid,           # I
+                price,             # J - Entry Price
+                stop_loss,         # K
+                tp1,               # L
+                tp2,               # M
+                tp3,               # N
+                lot_size,          # O
+                risk_pts,          # P
+                'Active',          # Q
+                '',                # R - TP1 Hit
+                '',                # S - TP2 Hit
+                '',                # T - TP3 Hit
+                '',                # U - BE Moved
+                '',                # V - Final Outcome
+                '',                # W - Gross P/L
+                '',                # X - Commission
+                '',                # Y - Swap
+                '',                # Z - Net P/L
+                '',                # AA - Cumulative
+                '',                # AB - Exit Time
+                '',                # AC - Duration
             ]
             
             worksheet.append_row(row, value_input_option='USER_ENTERED')
-            
             print(f"[SHEETS] ORB layer row added: {trade_id} @ {price} ({lot_size} lots)")
             return True
         
         # ═══════════════════════════════════════════════════════════════
-        # TP1_HIT, TP2_HIT, TP3_HIT, BE_MOVED, SL_HIT - Update ALL matching rows
+        # TP/SL/BE Events - Update ALL matching rows
         # ═══════════════════════════════════════════════════════════════
         worksheet, rows = find_all_orb_trade_rows(trade_id)
         
@@ -407,57 +499,158 @@ def update_orb_trade_outcome(outcome):
         for row_num in rows:
             try:
                 if event == 'TP1_HIT':
-                    worksheet.update_cell(row_num, 17, 'TP1 Hit - Partial')  # Q: Status
+                    worksheet.update_cell(row_num, 17, 'TP1 Hit - Partial')      # Q: Status
                     worksheet.update_cell(row_num, 18, f"{time_str} @ {price}")  # R: TP1 Hit
+                    # Log partial profit
+                    if profit != 0:
+                        worksheet.update_cell(row_num, 23, f"${profit:.2f}")     # W: Gross P/L
+                    if commission != 0:
+                        worksheet.update_cell(row_num, 24, f"${commission:.2f}") # X: Commission
+                    if swap != 0:
+                        worksheet.update_cell(row_num, 25, f"${swap:.2f}")       # Y: Swap
+                    if net_pnl != 0:
+                        worksheet.update_cell(row_num, 26, f"${net_pnl:.2f}")    # Z: Net P/L
+                    if cumulative_pnl != 0:
+                        worksheet.update_cell(row_num, 27, f"${cumulative_pnl:.2f}")  # AA: Cumulative
                 
                 elif event == 'TP2_HIT':
-                    worksheet.update_cell(row_num, 17, 'TP2 Hit - Partial')  # Q: Status
+                    worksheet.update_cell(row_num, 17, 'TP2 Hit - Partial')      # Q: Status
                     worksheet.update_cell(row_num, 19, f"{time_str} @ {price}")  # S: TP2 Hit
+                    if profit != 0:
+                        # Accumulate with existing
+                        existing = worksheet.cell(row_num, 23).value
+                        existing_val = float(existing.replace('$', '').replace(',', '')) if existing else 0
+                        worksheet.update_cell(row_num, 23, f"${existing_val + profit:.2f}")
+                    if commission != 0:
+                        existing = worksheet.cell(row_num, 24).value
+                        existing_val = float(existing.replace('$', '').replace(',', '')) if existing else 0
+                        worksheet.update_cell(row_num, 24, f"${existing_val + commission:.2f}")
+                    if swap != 0:
+                        existing = worksheet.cell(row_num, 25).value
+                        existing_val = float(existing.replace('$', '').replace(',', '')) if existing else 0
+                        worksheet.update_cell(row_num, 25, f"${existing_val + swap:.2f}")
+                    if net_pnl != 0:
+                        existing = worksheet.cell(row_num, 26).value
+                        existing_val = float(existing.replace('$', '').replace(',', '')) if existing else 0
+                        worksheet.update_cell(row_num, 26, f"${existing_val + net_pnl:.2f}")
+                    if cumulative_pnl != 0:
+                        worksheet.update_cell(row_num, 27, f"${cumulative_pnl:.2f}")
                 
                 elif event == 'TP3_HIT':
-                    worksheet.update_cell(row_num, 17, 'TP3 Hit - Closed')  # Q: Status
+                    worksheet.update_cell(row_num, 17, 'TP3 Hit - Closed')       # Q: Status
                     worksheet.update_cell(row_num, 20, f"{time_str} @ {price}")  # T: TP3 Hit
-                    worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
-                    worksheet.update_cell(row_num, 22, 'Win')  # V: Final Outcome
+                    worksheet.update_cell(row_num, 22, 'Win')                    # V: Final Outcome
+                    worksheet.update_cell(row_num, 28, timestamp)                # AB: Exit Time
+                    
+                    # Final profit (accumulate with existing)
                     if profit != 0:
-                        worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
+                        existing = worksheet.cell(row_num, 23).value
+                        existing_val = float(existing.replace('$', '').replace(',', '')) if existing else 0
+                        worksheet.update_cell(row_num, 23, f"${existing_val + profit:.2f}")
+                    if commission != 0:
+                        existing = worksheet.cell(row_num, 24).value
+                        existing_val = float(existing.replace('$', '').replace(',', '')) if existing else 0
+                        worksheet.update_cell(row_num, 24, f"${existing_val + commission:.2f}")
+                    if swap != 0:
+                        existing = worksheet.cell(row_num, 25).value
+                        existing_val = float(existing.replace('$', '').replace(',', '')) if existing else 0
+                        worksheet.update_cell(row_num, 25, f"${existing_val + swap:.2f}")
+                    
+                    # Final net PnL = cumulative is the most accurate
+                    if cumulative_pnl != 0:
+                        worksheet.update_cell(row_num, 26, f"${cumulative_pnl:.2f}")
+                        worksheet.update_cell(row_num, 27, f"${cumulative_pnl:.2f}")
+                    elif net_pnl != 0:
+                        existing = worksheet.cell(row_num, 26).value
+                        existing_val = float(existing.replace('$', '').replace(',', '')) if existing else 0
+                        worksheet.update_cell(row_num, 26, f"${existing_val + net_pnl:.2f}")
+                    
+                    # Duration calculation
+                    if duration:
+                        worksheet.update_cell(row_num, 29, duration)             # AC: Duration
+                    elif entry_time:
+                        calc_duration = calculate_duration_from_times(entry_time, timestamp)
+                        if calc_duration:
+                            worksheet.update_cell(row_num, 29, calc_duration)
                 
                 elif event == 'BE_MOVED':
-                    worksheet.update_cell(row_num, 21, f"Yes @ {time_str}")  # U: BE Moved
-                    if 'new_sl' in outcome:
-                        worksheet.update_cell(row_num, 11, outcome['new_sl'])  # K: Stop Loss
-                    elif price != 0:
+                    worksheet.update_cell(row_num, 21, f"Yes @ {time_str}")      # U: BE Moved
+                    if 'new_sl' in outcome and outcome['new_sl'] > 0:
+                        worksheet.update_cell(row_num, 11, outcome['new_sl'])    # K: Stop Loss
+                    elif price > 0:
                         worksheet.update_cell(row_num, 11, price)
                 
-                elif event == 'SL_HIT':
-                    worksheet.update_cell(row_num, 17, 'SL Hit - Closed')  # Q: Status
-                    worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
-                    worksheet.update_cell(row_num, 22, 'Loss')  # V: Final Outcome
+                elif event == 'SL_HIT' or event == 'CLOSED_EXTERNAL':
+                    worksheet.update_cell(row_num, 17, 'SL Hit - Closed')        # Q: Status
+                    worksheet.update_cell(row_num, 28, timestamp)                # AB: Exit Time
+                    
+                    if profit < 0:
+                        worksheet.update_cell(row_num, 22, 'Loss')               # V: Final Outcome
+                    elif profit > 0:
+                        worksheet.update_cell(row_num, 22, 'Win (External)')
+                    else:
+                        worksheet.update_cell(row_num, 22, 'Breakeven')
+                    
                     if profit != 0:
-                        worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
+                        existing = worksheet.cell(row_num, 23).value
+                        existing_val = float(existing.replace('$', '').replace(',', '')) if existing else 0
+                        worksheet.update_cell(row_num, 23, f"${existing_val + profit:.2f}")
+                    if commission != 0:
+                        existing = worksheet.cell(row_num, 24).value
+                        existing_val = float(existing.replace('$', '').replace(',', '')) if existing else 0
+                        worksheet.update_cell(row_num, 24, f"${existing_val + commission:.2f}")
+                    if swap != 0:
+                        existing = worksheet.cell(row_num, 25).value
+                        existing_val = float(existing.replace('$', '').replace(',', '')) if existing else 0
+                        worksheet.update_cell(row_num, 25, f"${existing_val + swap:.2f}")
+                    if cumulative_pnl != 0:
+                        worksheet.update_cell(row_num, 26, f"${cumulative_pnl:.2f}")
+                        worksheet.update_cell(row_num, 27, f"${cumulative_pnl:.2f}")
+                    
+                    # Duration
+                    if duration:
+                        worksheet.update_cell(row_num, 29, duration)
+                    elif entry_time:
+                        calc_duration = calculate_duration_from_times(entry_time, timestamp)
+                        if calc_duration:
+                            worksheet.update_cell(row_num, 29, calc_duration)
                 
                 elif event == 'MANUAL_CLOSE' or event == 'CLOSED':
-                    worksheet.update_cell(row_num, 17, 'Manually Closed')  # Q: Status
-                    worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
-                    if profit != 0:
-                        worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
+                    worksheet.update_cell(row_num, 17, 'Manually Closed')        # Q: Status
+                    worksheet.update_cell(row_num, 28, timestamp)                # AB: Exit Time
+                    
                     if profit > 0:
                         worksheet.update_cell(row_num, 22, 'Win (Manual)')
                     elif profit < 0:
                         worksheet.update_cell(row_num, 22, 'Loss (Manual)')
                     else:
                         worksheet.update_cell(row_num, 22, 'Breakeven (Manual)')
+                    
+                    if profit != 0:
+                        worksheet.update_cell(row_num, 23, f"${profit:.2f}")
+                    if commission != 0:
+                        worksheet.update_cell(row_num, 24, f"${commission:.2f}")
+                    if swap != 0:
+                        worksheet.update_cell(row_num, 25, f"${swap:.2f}")
+                    if cumulative_pnl != 0:
+                        worksheet.update_cell(row_num, 26, f"${cumulative_pnl:.2f}")
+                    
+                    if duration:
+                        worksheet.update_cell(row_num, 29, duration)
                 
             except Exception as row_error:
                 print(f"[WARNING] Failed to update row {row_num}: {row_error}")
                 continue
         
-        print(f"[SHEETS] ORB updated {len(rows)} rows: {trade_id} | {event}")
+        print(f"[SHEETS] ORB updated {len(rows)} rows: {trade_id} | {event} | NetPnL: ${net_pnl:.2f}")
         return True
     
     except Exception as e:
         print(f"[ERROR] Failed to update ORB outcome: {e}")
+        import traceback
+        traceback.print_exc()
         return False
+
 
 # ═══════════════════════════════════════════════════════════════════
 # FIBO LOGGING FUNCTIONS (Existing)
@@ -527,47 +720,7 @@ def calculate_duration(outcome, worksheet, row_num, date_col=2, time_col=3):
             else:
                 return None
         
-        for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%H:%M:%S']:
-            try:
-                if 'T' in entry_time_str or '-' in entry_time_str:
-                    entry_dt = datetime.strptime(entry_time_str, fmt)
-                else:
-                    entry_dt = datetime.strptime(entry_time_str, '%H:%M:%S')
-                break
-            except:
-                continue
-        else:
-            return None
-        
-        for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%H:%M:%S']:
-            try:
-                if 'T' in timestamp or '-' in timestamp:
-                    exit_dt = datetime.strptime(timestamp, fmt)
-                else:
-                    exit_dt = datetime.strptime(timestamp, '%H:%M:%S')
-                break
-            except:
-                continue
-        else:
-            return None
-        
-        duration = exit_dt - entry_dt
-        
-        total_seconds = int(duration.total_seconds())
-        if total_seconds < 0:
-            total_seconds = abs(total_seconds)
-        
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        
-        if hours > 24:
-            days = hours // 24
-            hours = hours % 24
-            return f"{days}d {hours}h {minutes}m"
-        elif hours > 0:
-            return f"{hours}h {minutes}m {seconds}s"
-        else:
-            return f"{minutes}m {seconds}s"
+        return calculate_duration_from_times(entry_time_str, timestamp)
     
     except Exception as e:
         print(f"[WARNING] Could not calculate duration: {e}")
@@ -694,6 +847,7 @@ def update_trade_outcome(outcome):
         print(f"[ERROR] Failed to update Fibo outcome: {e}")
         return False
 
+
 # ═══════════════════════════════════════════════════════════════════
 # WEBHOOK ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════
@@ -702,7 +856,7 @@ def update_trade_outcome(outcome):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "2.5 - Layered ORB Support",
+        "version": "3.0 - Accurate PnL & Duration",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
@@ -768,7 +922,6 @@ def orb_webhook():
             if original_symbol != data['symbol']:
                 print(f"[ORB] Symbol mapped: {original_symbol} → {data['symbol']}")
         
-        # Log ORB to dedicated sheet with daily tabs
         if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
             log_orb_entry_to_sheets(data)
         
@@ -810,14 +963,21 @@ def update_webhook():
 
 @app.route('/orb_update', methods=['POST'])
 def orb_update_webhook():
-    """Update endpoint for ORB trades"""
+    """Update endpoint for ORB trades - Enhanced with PnL details"""
     try:
         data = request.get_json()
         
         if not data:
             return jsonify({"status": "error", "message": "No data received"}), 400
         
-        print(f"[ORB_UPDATE] Received: {data.get('event', 'Unknown')} for {data.get('trade_id', 'Unknown')}")
+        event = data.get('event', 'Unknown')
+        trade_id = data.get('trade_id', 'Unknown')
+        profit = data.get('profit', 0)
+        commission = data.get('commission', 0)
+        swap = data.get('swap', 0)
+        net_pnl = data.get('net_pnl', profit + commission + swap)
+        
+        print(f"[ORB_UPDATE] {event} for {trade_id} | Profit: ${profit:.2f} | Comm: ${commission:.2f} | Swap: ${swap:.2f} | Net: ${net_pnl:.2f}")
         
         if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
             update_orb_trade_outcome(data)
@@ -826,16 +986,20 @@ def orb_update_webhook():
     
     except Exception as e:
         print(f"[ERROR] /orb_update error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
         "status": "running",
+        "version": "3.0",
         "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
         "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "timestamp": datetime.utcnow().isoformat()
     })
+
 
 # ═══════════════════════════════════════════════════════════════════
 # RUN SERVER
@@ -843,4 +1007,6 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
+    print(f"[STARTUP] Trading Webhook v3.0 - Accurate PnL & Duration")
+    print(f"[STARTUP] Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
