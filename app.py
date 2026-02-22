@@ -218,6 +218,31 @@ def find_orb_trade_in_all_sheets(trade_id):
         print(f"[ERROR] Failed to search for ORB trade: {e}")
         return None, None
 
+def find_all_orb_trade_rows(trade_id):
+    """Find ALL rows matching a trade ID (for updating all layers)"""
+    try:
+        spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID_ORB)
+        if not spreadsheet:
+            return None, []
+        
+        worksheets = spreadsheet.worksheets()
+        
+        for worksheet in worksheets:
+            try:
+                cells = worksheet.findall(trade_id)
+                if cells:
+                    rows = [cell.row for cell in cells]
+                    print(f"[SHEETS] Found {len(rows)} rows for {trade_id} in {worksheet.title}")
+                    return worksheet, rows
+            except:
+                continue
+        
+        return None, []
+    
+    except Exception as e:
+        print(f"[ERROR] Failed to search for ORB trade rows: {e}")
+        return None, []
+
 def log_orb_entry_to_sheets(signal):
     """Log ORB trade entry to today's worksheet"""
     try:
@@ -239,14 +264,14 @@ def log_orb_entry_to_sheets(signal):
             signal.get('orb_high', ''),            # G
             signal.get('orb_low', ''),             # H
             signal.get('orb_mid', ''),             # I
-            '',                                    # J - Entry Price (filled on ENTRY update)
+            '',                                    # J - Entry Price (filled on LAYER_FILLED)
             signal.get('stop_loss', ''),           # K
             signal.get('tp1', ''),                 # L
             signal.get('tp2', ''),                 # M
             signal.get('tp3', ''),                 # N
-            '',                                    # O - Lot Size (filled on ENTRY update)
+            '',                                    # O - Lot Size (filled on LAYER_FILLED)
             signal.get('risk_pts', ''),            # P
-            'Active',                              # Q - Status
+            'Pending',                             # Q - Status (waiting for layers)
             '',                                    # R - TP1 Hit
             '',                                    # S - TP2 Hit
             '',                                    # T - TP3 Hit
@@ -260,7 +285,7 @@ def log_orb_entry_to_sheets(signal):
         
         sheet.append_row(row, value_input_option='USER_ENTERED')
         
-        print(f"[SHEETS] ORB entry logged to {sheet.title}: {signal.get('trade_id')}")
+        print(f"[SHEETS] ORB signal logged to {sheet.title}: {signal.get('trade_id')}")
         return True
     
     except Exception as e:
@@ -268,119 +293,166 @@ def log_orb_entry_to_sheets(signal):
         return False
 
 def update_orb_trade_outcome(outcome):
-    """Update ORB trade outcome across all worksheets"""
+    """Update ORB trade outcome - LAYER_FILLED creates new rows, other events update all matching rows"""
     try:
-        # Find the trade in any worksheet
-        worksheet, row_num = find_orb_trade_in_all_sheets(outcome.get('trade_id', ''))
-        
-        if not worksheet or not row_num:
-            print(f"[WARNING] ORB trade ID not found: {outcome.get('trade_id')}")
-            return False
-        
         event = outcome.get('event', '')
+        trade_id = outcome.get('trade_id', '')
         price = outcome.get('price', 0)
         profit = outcome.get('profit', 0)
         timestamp = outcome.get('timestamp', '')
         
-        # Always update these if provided (regardless of event type)
-        if 'lot_size' in outcome:
-            worksheet.update_cell(row_num, 15, outcome['lot_size'])  # O: Lot Size
-            print(f"[SHEETS] ORB lot size updated: {outcome['lot_size']}")
-        
-        if 'new_sl' in outcome:
-            worksheet.update_cell(row_num, 11, outcome['new_sl'])  # K: Stop Loss
-            print(f"[SHEETS] ORB SL updated: {outcome['new_sl']}")
-        elif 'stop_loss' in outcome:
-            worksheet.update_cell(row_num, 11, outcome['stop_loss'])
-        elif 'sl' in outcome:
-            worksheet.update_cell(row_num, 11, outcome['sl'])
-        
-        # Event-specific updates
-        if event == 'ENTRY':
-            worksheet.update_cell(row_num, 10, price)  # J: Entry Price
-            worksheet.update_cell(row_num, 17, 'Active')  # Q: Status
-            print(f"[SHEETS] ORB entry logged @ {price}")
-        
-        elif event == 'TP1_HIT':
-            worksheet.update_cell(row_num, 17, 'TP1 Hit - Partial')  # Q: Status
-            worksheet.update_cell(row_num, 18, f"{timestamp} @ {price}")  # R: TP1 Hit
-            print(f"[SHEETS] ORB TP1 hit @ {price}")
-        
-        elif event == 'TP2_HIT':
-            worksheet.update_cell(row_num, 17, 'TP2 Hit - Partial')  # Q: Status
-            worksheet.update_cell(row_num, 19, f"{timestamp} @ {price}")  # S: TP2 Hit
-            print(f"[SHEETS] ORB TP2 hit @ {price}")
-        
-        elif event == 'TP3_HIT':
-            worksheet.update_cell(row_num, 17, 'TP3 Hit - Closed')  # Q: Status
-            worksheet.update_cell(row_num, 20, f"{timestamp} @ {price}")  # T: TP3 Hit
-            worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
-            worksheet.update_cell(row_num, 22, 'Win')  # V: Final Outcome
-            if profit != 0:
-                worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
-            duration = calculate_duration(outcome, worksheet, row_num, 2, 3)
-            if duration:
-                worksheet.update_cell(row_num, 26, duration)  # Z: Duration
-            print(f"[SHEETS] ORB TP3 hit - Trade closed @ {price}")
-        
-        elif event == 'BE_MOVED':
-            worksheet.update_cell(row_num, 21, f"Yes @ {timestamp}")  # U: BE Moved
-            if 'be_price' in outcome:
-                worksheet.update_cell(row_num, 11, outcome['be_price'])  # K: Stop Loss
-                print(f"[SHEETS] ORB BE moved - SL updated to {outcome['be_price']}")
-            elif 'entry_price' in outcome:
-                worksheet.update_cell(row_num, 11, outcome['entry_price'])
-                print(f"[SHEETS] ORB BE moved - SL updated to entry")
-            elif price != 0:
-                worksheet.update_cell(row_num, 11, price)
-                print(f"[SHEETS] ORB BE moved - SL updated to {price}")
-        
-        elif event == 'SL_TRAILED' or event == 'TRAIL_MOVED':
-            if 'new_sl' in outcome:
-                worksheet.update_cell(row_num, 11, outcome['new_sl'])
-                print(f"[SHEETS] ORB SL trailed to {outcome['new_sl']}")
-            elif price != 0:
-                worksheet.update_cell(row_num, 11, price)
-                print(f"[SHEETS] ORB SL trailed to {price}")
-        
-        elif event == 'SL_HIT':
-            worksheet.update_cell(row_num, 17, 'SL Hit - Closed')  # Q: Status
-            worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
-            if price != 0:
-                worksheet.update_cell(row_num, 11, price)  # K: Actual exit price
-            if profit != 0:
-                worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
-            r_multiple = outcome.get('r_multiple', 0)
-            if r_multiple != 0:
-                worksheet.update_cell(row_num, 24, f"{r_multiple:+.2f}R")  # X: R-Multiple
-                worksheet.update_cell(row_num, 22, f"{r_multiple:+.2f}R")  # V: Final Outcome
+        # Parse timestamp
+        try:
+            time_parts = timestamp.split(' ')
+            if len(time_parts) >= 2:
+                date_str = time_parts[0]
+                time_str = time_parts[1]
             else:
-                if profit == 0 or (profit > -1 and profit < 1):
-                    worksheet.update_cell(row_num, 22, 'Breakeven')
-                else:
-                    worksheet.update_cell(row_num, 22, 'Loss')
-            duration = calculate_duration(outcome, worksheet, row_num, 2, 3)
-            if duration:
-                worksheet.update_cell(row_num, 26, duration)  # Z: Duration
-            print(f"[SHEETS] ORB SL hit - Trade closed @ {price}")
+                now = datetime.utcnow()
+                date_str = now.strftime('%Y-%m-%d')
+                time_str = now.strftime('%H:%M:%S')
+        except:
+            now = datetime.utcnow()
+            date_str = now.strftime('%Y-%m-%d')
+            time_str = now.strftime('%H:%M:%S')
         
-        elif event == 'MANUAL_CLOSE' or event == 'CLOSED':
-            worksheet.update_cell(row_num, 17, 'Manually Closed')  # Q: Status
-            worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
-            if profit != 0:
-                worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
-            if profit > 0:
-                worksheet.update_cell(row_num, 22, 'Win (Manual)')  # V: Final Outcome
-            elif profit < 0:
-                worksheet.update_cell(row_num, 22, 'Loss (Manual)')
+        # ═══════════════════════════════════════════════════════════════
+        # LAYER_FILLED - Creates a NEW row for each layer
+        # ═══════════════════════════════════════════════════════════════
+        if event == 'LAYER_FILLED':
+            worksheet = get_or_create_orb_daily_worksheet()
+            if not worksheet:
+                return False
+            
+            lot_size = outcome.get('lot_size', 0)
+            
+            # Find the original signal row to get setup details
+            original_worksheet, original_row = find_orb_trade_in_all_sheets(trade_id)
+            
+            if original_worksheet and original_row:
+                # Get data from original row
+                symbol = original_worksheet.cell(original_row, 4).value  # D: Symbol
+                direction = original_worksheet.cell(original_row, 5).value  # E: Direction
+                session = original_worksheet.cell(original_row, 6).value  # F: Session
+                orb_high = original_worksheet.cell(original_row, 7).value  # G: ORB High
+                orb_low = original_worksheet.cell(original_row, 8).value  # H: ORB Low
+                orb_mid = original_worksheet.cell(original_row, 9).value  # I: ORB Mid
+                stop_loss = original_worksheet.cell(original_row, 11).value  # K: Stop Loss
+                tp1 = original_worksheet.cell(original_row, 12).value  # L: TP1
+                tp2 = original_worksheet.cell(original_row, 13).value  # M: TP2
+                tp3 = original_worksheet.cell(original_row, 14).value  # N: TP3
+                risk_pts = original_worksheet.cell(original_row, 16).value  # P: Risk pts
+                
+                # Update original row status to show it's active now
+                original_worksheet.update_cell(original_row, 17, 'Active - Layering')
             else:
-                worksheet.update_cell(row_num, 22, 'Breakeven (Manual)')
-            duration = calculate_duration(outcome, worksheet, row_num, 2, 3)
-            if duration:
-                worksheet.update_cell(row_num, 26, duration)  # Z: Duration
-            print(f"[SHEETS] ORB manual close @ {price}")
+                # Fallback if original not found
+                symbol = ""
+                direction = ""
+                session = ""
+                orb_high = ""
+                orb_low = ""
+                orb_mid = ""
+                stop_loss = ""
+                tp1 = ""
+                tp2 = ""
+                tp3 = ""
+                risk_pts = ""
+            
+            # Create new row for this layer
+            row = [
+                trade_id,                              # A: Trade ID
+                date_str,                              # B: Date
+                time_str,                              # C: Time
+                symbol,                                # D: Symbol
+                direction,                             # E: Direction
+                session,                               # F: Session
+                orb_high,                              # G: ORB High
+                orb_low,                               # H: ORB Low
+                orb_mid,                               # I: ORB Mid
+                price,                                 # J: Entry Price (THIS LAYER)
+                stop_loss,                             # K: Stop Loss
+                tp1,                                   # L: TP1
+                tp2,                                   # M: TP2
+                tp3,                                   # N: TP3
+                lot_size,                              # O: Lot Size (THIS LAYER)
+                risk_pts,                              # P: Risk pts
+                'Active',                              # Q: Status
+                '',                                    # R: TP1 Hit
+                '',                                    # S: TP2 Hit
+                '',                                    # T: TP3 Hit
+                '',                                    # U: BE Moved
+                '',                                    # V: Final Outcome
+                '',                                    # W: Profit/Loss
+                '',                                    # X: R-Multiple
+                '',                                    # Y: Exit Time
+                '',                                    # Z: Duration
+            ]
+            
+            worksheet.append_row(row, value_input_option='USER_ENTERED')
+            
+            print(f"[SHEETS] ORB layer row added: {trade_id} @ {price} ({lot_size} lots)")
+            return True
         
-        print(f"[SHEETS] ORB updated {worksheet.title}: {outcome.get('trade_id')} | {event}")
+        # ═══════════════════════════════════════════════════════════════
+        # TP1_HIT, TP2_HIT, TP3_HIT, BE_MOVED, SL_HIT - Update ALL matching rows
+        # ═══════════════════════════════════════════════════════════════
+        worksheet, rows = find_all_orb_trade_rows(trade_id)
+        
+        if not worksheet or not rows:
+            print(f"[WARNING] ORB trade ID not found: {trade_id}")
+            return False
+        
+        # Update each row
+        for row_num in rows:
+            try:
+                if event == 'TP1_HIT':
+                    worksheet.update_cell(row_num, 17, 'TP1 Hit - Partial')  # Q: Status
+                    worksheet.update_cell(row_num, 18, f"{time_str} @ {price}")  # R: TP1 Hit
+                
+                elif event == 'TP2_HIT':
+                    worksheet.update_cell(row_num, 17, 'TP2 Hit - Partial')  # Q: Status
+                    worksheet.update_cell(row_num, 19, f"{time_str} @ {price}")  # S: TP2 Hit
+                
+                elif event == 'TP3_HIT':
+                    worksheet.update_cell(row_num, 17, 'TP3 Hit - Closed')  # Q: Status
+                    worksheet.update_cell(row_num, 20, f"{time_str} @ {price}")  # T: TP3 Hit
+                    worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
+                    worksheet.update_cell(row_num, 22, 'Win')  # V: Final Outcome
+                    if profit != 0:
+                        worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
+                
+                elif event == 'BE_MOVED':
+                    worksheet.update_cell(row_num, 21, f"Yes @ {time_str}")  # U: BE Moved
+                    if 'new_sl' in outcome:
+                        worksheet.update_cell(row_num, 11, outcome['new_sl'])  # K: Stop Loss
+                    elif price != 0:
+                        worksheet.update_cell(row_num, 11, price)
+                
+                elif event == 'SL_HIT':
+                    worksheet.update_cell(row_num, 17, 'SL Hit - Closed')  # Q: Status
+                    worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
+                    worksheet.update_cell(row_num, 22, 'Loss')  # V: Final Outcome
+                    if profit != 0:
+                        worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
+                
+                elif event == 'MANUAL_CLOSE' or event == 'CLOSED':
+                    worksheet.update_cell(row_num, 17, 'Manually Closed')  # Q: Status
+                    worksheet.update_cell(row_num, 25, timestamp)  # Y: Exit Time
+                    if profit != 0:
+                        worksheet.update_cell(row_num, 23, f"${profit:.2f}")  # W: Profit/Loss
+                    if profit > 0:
+                        worksheet.update_cell(row_num, 22, 'Win (Manual)')
+                    elif profit < 0:
+                        worksheet.update_cell(row_num, 22, 'Loss (Manual)')
+                    else:
+                        worksheet.update_cell(row_num, 22, 'Breakeven (Manual)')
+                
+            except Exception as row_error:
+                print(f"[WARNING] Failed to update row {row_num}: {row_error}")
+                continue
+        
+        print(f"[SHEETS] ORB updated {len(rows)} rows: {trade_id} | {event}")
         return True
     
     except Exception as e:
@@ -630,7 +702,7 @@ def update_trade_outcome(outcome):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "2.4 - Daily ORB Sheet Support",
+        "version": "2.5 - Layered ORB Support",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
