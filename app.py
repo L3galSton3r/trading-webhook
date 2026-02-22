@@ -357,7 +357,7 @@ def update_trade_outcome(outcome):
         return False
 
 # ═══════════════════════════════════════════════════════════════════
-# ORB SHEET FUNCTIONS
+# ORB SHEET FUNCTIONS (FIXED)
 # ═══════════════════════════════════════════════════════════════════
 
 def get_or_create_orb_daily_worksheet():
@@ -557,90 +557,99 @@ def update_orb_trade_outcome(outcome):
             print(f"[SHEETS] ORB layer row added: {trade_id} @ {price} ({lot_size} lots)")
             return True
         
-        # Other events - Update all matching rows
+        # Find all matching rows
         worksheet, rows = find_all_orb_trade_rows(trade_id)
         
         if not worksheet or not rows:
             print(f"[WARNING] ORB trade ID not found: {trade_id}")
             return False
         
-        for row_num in rows:
+        # ═══════════════════════════════════════════════════════════════
+        # TP EVENTS - Update FIRST ROW ONLY (summary row)
+        # ═══════════════════════════════════════════════════════════════
+        if event in ['TP1_HIT', 'TP2_HIT', 'TP3_HIT']:
+            row_num = rows[0]  # First row only
+            
             try:
                 if event == 'TP1_HIT':
                     worksheet.update_cell(row_num, 17, 'TP1 Hit - Partial')
                     worksheet.update_cell(row_num, 18, f"{time_str} @ {price}")
-                    if profit != 0:
-                        worksheet.update_cell(row_num, 23, f"${profit:.2f}")
-                    if commission != 0:
-                        worksheet.update_cell(row_num, 24, f"${commission:.2f}")
-                    if swap != 0:
-                        worksheet.update_cell(row_num, 25, f"${swap:.2f}")
-                    if net_pnl != 0:
-                        worksheet.update_cell(row_num, 26, f"${net_pnl:.2f}")
-                    if cumulative_pnl != 0:
-                        worksheet.update_cell(row_num, 27, f"${cumulative_pnl:.2f}")
                 
                 elif event == 'TP2_HIT':
                     worksheet.update_cell(row_num, 17, 'TP2 Hit - Partial')
                     worksheet.update_cell(row_num, 19, f"{time_str} @ {price}")
-                    if profit != 0:
-                        existing = parse_dollar_value(worksheet.cell(row_num, 23).value)
-                        worksheet.update_cell(row_num, 23, f"${existing + profit:.2f}")
-                    if commission != 0:
-                        existing = parse_dollar_value(worksheet.cell(row_num, 24).value)
-                        worksheet.update_cell(row_num, 24, f"${existing + commission:.2f}")
-                    if swap != 0:
-                        existing = parse_dollar_value(worksheet.cell(row_num, 25).value)
-                        worksheet.update_cell(row_num, 25, f"${existing + swap:.2f}")
-                    if net_pnl != 0:
-                        existing = parse_dollar_value(worksheet.cell(row_num, 26).value)
-                        worksheet.update_cell(row_num, 26, f"${existing + net_pnl:.2f}")
-                    if cumulative_pnl != 0:
-                        worksheet.update_cell(row_num, 27, f"${cumulative_pnl:.2f}")
                 
                 elif event == 'TP3_HIT':
                     worksheet.update_cell(row_num, 17, 'TP3 Hit - Closed')
                     worksheet.update_cell(row_num, 20, f"{time_str} @ {price}")
                     worksheet.update_cell(row_num, 22, 'Win')
                     worksheet.update_cell(row_num, 28, timestamp)
-                    if profit != 0:
-                        existing = parse_dollar_value(worksheet.cell(row_num, 23).value)
-                        worksheet.update_cell(row_num, 23, f"${existing + profit:.2f}")
-                    if commission != 0:
-                        existing = parse_dollar_value(worksheet.cell(row_num, 24).value)
-                        worksheet.update_cell(row_num, 24, f"${existing + commission:.2f}")
-                    if swap != 0:
-                        existing = parse_dollar_value(worksheet.cell(row_num, 25).value)
-                        worksheet.update_cell(row_num, 25, f"${existing + swap:.2f}")
-                    if cumulative_pnl != 0:
-                        worksheet.update_cell(row_num, 26, f"${cumulative_pnl:.2f}")
-                        worksheet.update_cell(row_num, 27, f"${cumulative_pnl:.2f}")
                     if duration:
                         worksheet.update_cell(row_num, 29, duration)
-                    elif entry_time:
-                        calc_duration = calculate_duration_from_times(entry_time, timestamp)
-                        if calc_duration:
-                            worksheet.update_cell(row_num, 29, calc_duration)
                 
-                elif event == 'BE_MOVED':
+                # Update cumulative PnL on first row
+                if cumulative_pnl != 0:
+                    worksheet.update_cell(row_num, 27, f"${cumulative_pnl:.2f}")
+                
+                print(f"[SHEETS] ORB {event} updated first row: {trade_id}")
+                return True
+                
+            except Exception as e:
+                print(f"[WARNING] Failed to update TP event: {e}")
+                return False
+        
+        # ═══════════════════════════════════════════════════════════════
+        # BE_MOVED - Update ALL rows (SL change applies to all)
+        # ═══════════════════════════════════════════════════════════════
+        if event == 'BE_MOVED':
+            for row_num in rows:
+                try:
                     worksheet.update_cell(row_num, 21, f"Yes @ {time_str}")
                     if 'new_sl' in outcome and outcome['new_sl'] > 0:
                         worksheet.update_cell(row_num, 11, outcome['new_sl'])
                     elif price > 0:
                         worksheet.update_cell(row_num, 11, price)
-                
-                elif event == 'SL_HIT' or event == 'CLOSED_EXTERNAL':
-                    worksheet.update_cell(row_num, 17, 'SL Hit - Closed')
+                except Exception as e:
+                    print(f"[WARNING] Failed to update BE row {row_num}: {e}")
+            
+            print(f"[SHEETS] ORB BE_MOVED updated {len(rows)} rows")
+            return True
+        
+        # ═══════════════════════════════════════════════════════════════
+        # SL_HIT / CLOSED_EXTERNAL - Update ONE row only (first unclosed)
+        # ═══════════════════════════════════════════════════════════════
+        if event in ['SL_HIT', 'CLOSED_EXTERNAL']:
+            # Find first row that doesn't have "Closed" in status
+            updated = False
+            for row_num in rows:
+                try:
+                    current_status = worksheet.cell(row_num, 17).value or ''
+                    
+                    # Skip already closed rows
+                    if 'Closed' in current_status:
+                        continue
+                    
+                    # Update this row
+                    if event == 'SL_HIT':
+                        worksheet.update_cell(row_num, 17, 'SL Hit - Closed')
+                    else:
+                        if profit > 0:
+                            worksheet.update_cell(row_num, 17, 'BE Hit - Closed')
+                        elif profit < 0:
+                            worksheet.update_cell(row_num, 17, 'SL Hit - Closed')
+                        else:
+                            worksheet.update_cell(row_num, 17, 'BE Hit - Closed')
+                    
                     worksheet.update_cell(row_num, 28, timestamp)
                     
                     if profit < 0:
                         worksheet.update_cell(row_num, 22, 'Loss')
                     elif profit > 0:
-                        worksheet.update_cell(row_num, 22, 'Win (External)')
+                        worksheet.update_cell(row_num, 22, 'Win')
                     else:
                         worksheet.update_cell(row_num, 22, 'Breakeven')
                     
-                    # Individual layer PnL (don't accumulate across different rows) - FIXED
+                    # Individual layer PnL
                     if profit != 0:
                         worksheet.update_cell(row_num, 23, f"${profit:.2f}")
                     if commission != 0:
@@ -648,30 +657,49 @@ def update_orb_trade_outcome(outcome):
                     if swap != 0:
                         worksheet.update_cell(row_num, 25, f"${swap:.2f}")
                     
-                    # Net PnL for this specific layer
                     layer_net = profit + commission + swap
                     worksheet.update_cell(row_num, 26, f"${layer_net:.2f}")
                     
-                    # Cumulative is the setup total (from EA)
                     if cumulative_pnl != 0:
                         worksheet.update_cell(row_num, 27, f"${cumulative_pnl:.2f}")
                     
                     if duration:
                         worksheet.update_cell(row_num, 29, duration)
-                    elif entry_time:
-                        calc_duration = calculate_duration_from_times(entry_time, timestamp)
-                        if calc_duration:
-                            worksheet.update_cell(row_num, 29, calc_duration)
-                
-                elif event == 'MANUAL_CLOSE' or event == 'CLOSED':
+                    
+                    print(f"[SHEETS] ORB {event} updated row {row_num}: ${profit:.2f}")
+                    updated = True
+                    break  # Only update ONE row per event
+                    
+                except Exception as e:
+                    print(f"[WARNING] Failed to update row {row_num}: {e}")
+                    continue
+            
+            if not updated:
+                print(f"[WARNING] No unclosed row found for {trade_id}")
+            
+            return updated
+        
+        # ═══════════════════════════════════════════════════════════════
+        # MANUAL_CLOSE / CLOSED - Update ONE row only
+        # ═══════════════════════════════════════════════════════════════
+        if event in ['MANUAL_CLOSE', 'CLOSED']:
+            for row_num in rows:
+                try:
+                    current_status = worksheet.cell(row_num, 17).value or ''
+                    
+                    if 'Closed' in current_status:
+                        continue
+                    
                     worksheet.update_cell(row_num, 17, 'Manually Closed')
                     worksheet.update_cell(row_num, 28, timestamp)
+                    
                     if profit > 0:
                         worksheet.update_cell(row_num, 22, 'Win (Manual)')
                     elif profit < 0:
                         worksheet.update_cell(row_num, 22, 'Loss (Manual)')
                     else:
                         worksheet.update_cell(row_num, 22, 'Breakeven (Manual)')
+                    
                     if profit != 0:
                         worksheet.update_cell(row_num, 23, f"${profit:.2f}")
                     if commission != 0:
@@ -682,13 +710,18 @@ def update_orb_trade_outcome(outcome):
                         worksheet.update_cell(row_num, 26, f"${cumulative_pnl:.2f}")
                     if duration:
                         worksheet.update_cell(row_num, 29, duration)
-                
-            except Exception as row_error:
-                print(f"[WARNING] Failed to update row {row_num}: {row_error}")
-                continue
+                    
+                    print(f"[SHEETS] ORB MANUAL_CLOSE updated row {row_num}")
+                    break
+                    
+                except Exception as e:
+                    print(f"[WARNING] Failed to update row {row_num}: {e}")
+                    continue
+            
+            return True
         
-        print(f"[SHEETS] ORB updated {len(rows)} rows: {trade_id} | {event} | NetPnL: ${net_pnl:.2f}")
-        return True
+        print(f"[WARNING] Unknown event type: {event}")
+        return False
     
     except Exception as e:
         print(f"[ERROR] Failed to update ORB outcome: {e}")
@@ -704,7 +737,7 @@ def update_orb_trade_outcome(outcome):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "3.1 - Fixed Individual Layer PnL",
+        "version": "3.2 - Fixed TP & SL Layer Logging",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
@@ -840,7 +873,7 @@ def orb_update_webhook():
 def health():
     return jsonify({
         "status": "running",
-        "version": "3.1",
+        "version": "3.2",
         "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
         "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "timestamp": datetime.utcnow().isoformat()
@@ -852,6 +885,6 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"[STARTUP] Trading Webhook v3.1 - Fixed Individual Layer PnL")
+    print(f"[STARTUP] Trading Webhook v3.2 - Fixed TP & SL Layer Logging")
     print(f"[STARTUP] Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
