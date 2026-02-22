@@ -632,24 +632,30 @@ def update_orb_trade_outcome(outcome):
                 elif event == 'SL_HIT' or event == 'CLOSED_EXTERNAL':
                     worksheet.update_cell(row_num, 17, 'SL Hit - Closed')
                     worksheet.update_cell(row_num, 28, timestamp)
+                    
                     if profit < 0:
                         worksheet.update_cell(row_num, 22, 'Loss')
                     elif profit > 0:
                         worksheet.update_cell(row_num, 22, 'Win (External)')
                     else:
                         worksheet.update_cell(row_num, 22, 'Breakeven')
+                    
+                    # Individual layer PnL (don't accumulate across different rows) - FIXED
                     if profit != 0:
-                        existing = parse_dollar_value(worksheet.cell(row_num, 23).value)
-                        worksheet.update_cell(row_num, 23, f"${existing + profit:.2f}")
+                        worksheet.update_cell(row_num, 23, f"${profit:.2f}")
                     if commission != 0:
-                        existing = parse_dollar_value(worksheet.cell(row_num, 24).value)
-                        worksheet.update_cell(row_num, 24, f"${existing + commission:.2f}")
+                        worksheet.update_cell(row_num, 24, f"${commission:.2f}")
                     if swap != 0:
-                        existing = parse_dollar_value(worksheet.cell(row_num, 25).value)
-                        worksheet.update_cell(row_num, 25, f"${existing + swap:.2f}")
+                        worksheet.update_cell(row_num, 25, f"${swap:.2f}")
+                    
+                    # Net PnL for this specific layer
+                    layer_net = profit + commission + swap
+                    worksheet.update_cell(row_num, 26, f"${layer_net:.2f}")
+                    
+                    # Cumulative is the setup total (from EA)
                     if cumulative_pnl != 0:
-                        worksheet.update_cell(row_num, 26, f"${cumulative_pnl:.2f}")
                         worksheet.update_cell(row_num, 27, f"${cumulative_pnl:.2f}")
+                    
                     if duration:
                         worksheet.update_cell(row_num, 29, duration)
                     elif entry_time:
@@ -698,7 +704,7 @@ def update_orb_trade_outcome(outcome):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "3.0 - Accurate PnL & Duration",
+        "version": "3.1 - Fixed Individual Layer PnL",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
@@ -834,7 +840,7 @@ def orb_update_webhook():
 def health():
     return jsonify({
         "status": "running",
-        "version": "3.0",
+        "version": "3.1",
         "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
         "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "timestamp": datetime.utcnow().isoformat()
@@ -846,6 +852,6 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"[STARTUP] Trading Webhook v3.0 - Accurate PnL & Duration")
+    print(f"[STARTUP] Trading Webhook v3.1 - Fixed Individual Layer PnL")
     print(f"[STARTUP] Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
