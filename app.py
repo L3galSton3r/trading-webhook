@@ -264,6 +264,7 @@ def update_trade_outcome(outcome):
         event = outcome.get('event', '')
         price = outcome.get('price', 0)
         profit = outcome.get('profit', 0)
+        cumulative_profit = outcome.get('cumulative_profit', profit)
         timestamp = outcome.get('timestamp', '')
         
         if 'lot_size' in outcome:
@@ -283,21 +284,29 @@ def update_trade_outcome(outcome):
         elif event == 'TP1_HIT':
             worksheet.update_cell(row_num, 15, 'TP1 Hit - Partial')
             worksheet.update_cell(row_num, 16, f"{timestamp} @ {price}")
+            if cumulative_profit != 0:
+                worksheet.update_cell(row_num, 22, f"${cumulative_profit:.2f}")
         
         elif event == 'TP2_HIT':
             worksheet.update_cell(row_num, 15, 'TP2 Hit - Partial')
             worksheet.update_cell(row_num, 17, f"{timestamp} @ {price}")
+            if cumulative_profit != 0:
+                worksheet.update_cell(row_num, 22, f"${cumulative_profit:.2f}")
         
         elif event == 'TP3_HIT':
             worksheet.update_cell(row_num, 15, 'TP3 Hit - Partial')
             worksheet.update_cell(row_num, 18, f"{timestamp} @ {price}")
+            if cumulative_profit != 0:
+                worksheet.update_cell(row_num, 22, f"${cumulative_profit:.2f}")
         
         elif event == 'TP4_HIT':
             worksheet.update_cell(row_num, 15, 'TP4 Hit - Closed')
             worksheet.update_cell(row_num, 19, f"{timestamp} @ {price}")
             worksheet.update_cell(row_num, 23, timestamp)
             worksheet.update_cell(row_num, 21, 'Win')
-            if profit != 0:
+            if cumulative_profit != 0:
+                worksheet.update_cell(row_num, 22, f"${cumulative_profit:.2f}")
+            elif profit != 0:
                 worksheet.update_cell(row_num, 22, f"${profit:.2f}")
             duration = calculate_duration(outcome, worksheet, row_num)
             if duration:
@@ -311,6 +320,19 @@ def update_trade_outcome(outcome):
                 worksheet.update_cell(row_num, 8, outcome['entry_price'])
             elif price != 0:
                 worksheet.update_cell(row_num, 8, price)
+        
+        elif event == 'BE_CLOSED':
+            current_stage = outcome.get('current_stage', 1)
+            worksheet.update_cell(row_num, 15, 'BE Hit - Closed')
+            worksheet.update_cell(row_num, 21, f"Closed at BE (after TP{current_stage})")
+            worksheet.update_cell(row_num, 23, timestamp)
+            if cumulative_profit != 0:
+                worksheet.update_cell(row_num, 22, f"${cumulative_profit:.2f}")
+            elif profit != 0:
+                worksheet.update_cell(row_num, 22, f"${profit:.2f}")
+            duration = calculate_duration(outcome, worksheet, row_num)
+            if duration:
+                worksheet.update_cell(row_num, 24, duration)
         
         elif event == 'SL_TRAILED' or event == 'TRAIL_MOVED':
             if 'new_sl' in outcome:
@@ -331,6 +353,8 @@ def update_trade_outcome(outcome):
             else:
                 if profit == 0 or (profit > -1 and profit < 1):
                     worksheet.update_cell(row_num, 21, 'Breakeven')
+                elif profit > 0:
+                    worksheet.update_cell(row_num, 21, 'Win')
                 else:
                     worksheet.update_cell(row_num, 21, 'Loss')
             duration = calculate_duration(outcome, worksheet, row_num)
@@ -522,7 +546,6 @@ def update_orb_trade_outcome(outcome):
         if entry_time and timestamp:
             duration = calculate_duration_from_times(entry_time, timestamp)
         
-        # LAYER_FILLED - Creates new row
         if event == 'LAYER_FILLED':
             worksheet = get_or_create_orb_daily_worksheet()
             if not worksheet:
@@ -560,18 +583,14 @@ def update_orb_trade_outcome(outcome):
             print(f"[SHEETS] ORB layer row added: {trade_id} @ {price} ({lot_size} lots)")
             return True
         
-        # Find all matching rows
         worksheet, rows = find_all_orb_trade_rows(trade_id)
         
         if not worksheet or not rows:
             print(f"[WARNING] ORB trade ID not found: {trade_id}")
             return False
         
-        # ═══════════════════════════════════════════════════════════════
-        # TP EVENTS - Update FIRST ROW ONLY (summary row)
-        # ═══════════════════════════════════════════════════════════════
         if event in ['TP1_HIT', 'TP2_HIT', 'TP3_HIT']:
-            row_num = rows[0]  # First row only
+            row_num = rows[0]
             
             try:
                 if event == 'TP1_HIT':
@@ -590,7 +609,6 @@ def update_orb_trade_outcome(outcome):
                     if duration:
                         worksheet.update_cell(row_num, 29, duration)
                 
-                # Update cumulative PnL on first row
                 if cumulative_pnl != 0:
                     worksheet.update_cell(row_num, 27, f"${cumulative_pnl:.2f}")
                 
@@ -601,9 +619,6 @@ def update_orb_trade_outcome(outcome):
                 print(f"[WARNING] Failed to update TP event: {e}")
                 return False
         
-        # ═══════════════════════════════════════════════════════════════
-        # BE_MOVED - Update ALL rows (SL change applies to all)
-        # ═══════════════════════════════════════════════════════════════
         if event == 'BE_MOVED':
             for row_num in rows:
                 try:
@@ -618,21 +633,15 @@ def update_orb_trade_outcome(outcome):
             print(f"[SHEETS] ORB BE_MOVED updated {len(rows)} rows")
             return True
         
-        # ═══════════════════════════════════════════════════════════════
-        # SL_HIT / CLOSED_EXTERNAL - Update ONE row only (first unclosed)
-        # ═══════════════════════════════════════════════════════════════
         if event in ['SL_HIT', 'CLOSED_EXTERNAL']:
-            # Find first row that doesn't have "Closed" in status
             updated = False
             for row_num in rows:
                 try:
                     current_status = worksheet.cell(row_num, 17).value or ''
                     
-                    # Skip already closed rows
                     if 'Closed' in current_status:
                         continue
                     
-                    # Update this row
                     if event == 'SL_HIT':
                         worksheet.update_cell(row_num, 17, 'SL Hit - Closed')
                     else:
@@ -652,7 +661,6 @@ def update_orb_trade_outcome(outcome):
                     else:
                         worksheet.update_cell(row_num, 22, 'Breakeven')
                     
-                    # Individual layer PnL
                     if profit != 0:
                         worksheet.update_cell(row_num, 23, f"${profit:.2f}")
                     if commission != 0:
@@ -671,7 +679,7 @@ def update_orb_trade_outcome(outcome):
                     
                     print(f"[SHEETS] ORB {event} updated row {row_num}: ${profit:.2f}")
                     updated = True
-                    break  # Only update ONE row per event
+                    break
                     
                 except Exception as e:
                     print(f"[WARNING] Failed to update row {row_num}: {e}")
@@ -682,9 +690,6 @@ def update_orb_trade_outcome(outcome):
             
             return updated
         
-        # ═══════════════════════════════════════════════════════════════
-        # MANUAL_CLOSE / CLOSED - Update ONE row only
-        # ═══════════════════════════════════════════════════════════════
         if event in ['MANUAL_CLOSE', 'CLOSED']:
             for row_num in rows:
                 try:
@@ -740,7 +745,7 @@ def update_orb_trade_outcome(outcome):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "3.2 - Fixed TP & SL Layer Logging",
+        "version": "3.3 - Added BE_CLOSED Event",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
@@ -876,7 +881,7 @@ def orb_update_webhook():
 def health():
     return jsonify({
         "status": "running",
-        "version": "3.2",
+        "version": "3.3",
         "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
         "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "timestamp": datetime.utcnow().isoformat()
@@ -888,6 +893,6 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"[STARTUP] Trading Webhook v3.2 - Fixed TP & SL Layer Logging")
+    print(f"[STARTUP] Trading Webhook v3.3 - Added BE_CLOSED Event")
     print(f"[STARTUP] Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
