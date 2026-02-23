@@ -30,6 +30,7 @@ SYMBOL_MAP = {
     "NAS100": "US100.std",
     "US100": "US100.std",
     "SPX500": "US500.std",
+    "GER40": "DE40.std",
     "US500": "US500.std",
     "AAPL": "AAPL.m",
     "AMZN": "AMZN.m",
