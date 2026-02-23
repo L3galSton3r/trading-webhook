@@ -25,6 +25,7 @@ SYMBOL_MAP = {
     "XAUUSD": "XAUUSD.m",
     "GOLD": "XAUUSD.m",
     "XAGUSD": "XAGUSD.m",
+    "SILVER": "XAGUSD.m",
     "BTCUSD": "BTCUSD.m",
     "ETHUSD": "ETHUSD.m",
     "NAS100": "US100.std",
