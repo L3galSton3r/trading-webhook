@@ -340,23 +340,27 @@ def update_trade_outcome(outcome):
             elif price != 0:
                 worksheet.update_cell(row_num, 8, price)
         
+        # ═══════════════════════════════════════════════════════════════
+        # SL_HIT - FIXED: Use text outcome, not broken R-multiple
+        # ═══════════════════════════════════════════════════════════════
         elif event == 'SL_HIT':
             worksheet.update_cell(row_num, 15, 'SL Hit - Closed')
             worksheet.update_cell(row_num, 23, timestamp)
+            
             if price != 0:
                 worksheet.update_cell(row_num, 8, price)
+            
             if profit != 0:
                 worksheet.update_cell(row_num, 22, f"${profit:.2f}")
-            r_multiple = outcome.get('r_multiple', 0)
-            if r_multiple != 0:
-                worksheet.update_cell(row_num, 21, f"{r_multiple:+.2f}R")
+            
+            # Simple text outcome (removed broken R-multiple calculation)
+            if profit == 0 or (profit > -1 and profit < 1):
+                worksheet.update_cell(row_num, 21, 'Breakeven')
+            elif profit > 0:
+                worksheet.update_cell(row_num, 21, 'Win')
             else:
-                if profit == 0 or (profit > -1 and profit < 1):
-                    worksheet.update_cell(row_num, 21, 'Breakeven')
-                elif profit > 0:
-                    worksheet.update_cell(row_num, 21, 'Win')
-                else:
-                    worksheet.update_cell(row_num, 21, 'Loss')
+                worksheet.update_cell(row_num, 21, 'Loss')
+            
             duration = calculate_duration(outcome, worksheet, row_num)
             if duration:
                 worksheet.update_cell(row_num, 24, duration)
@@ -745,7 +749,7 @@ def update_orb_trade_outcome(outcome):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "3.3 - Added BE_CLOSED Event",
+        "version": "3.4 - Fixed SL_HIT R-Multiple Bug",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
@@ -881,7 +885,7 @@ def orb_update_webhook():
 def health():
     return jsonify({
         "status": "running",
-        "version": "3.3",
+        "version": "3.4",
         "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
         "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "timestamp": datetime.utcnow().isoformat()
@@ -893,6 +897,6 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"[STARTUP] Trading Webhook v3.3 - Added BE_CLOSED Event")
+    print(f"[STARTUP] Trading Webhook v3.4 - Fixed SL_HIT R-Multiple Bug")
     print(f"[STARTUP] Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
