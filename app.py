@@ -19,6 +19,22 @@ GOOGLE_SHEET_ID_ORB = os.environ.get('GOOGLE_SHEET_ID_ORB', '')
 TIMEZONE_OFFSET = 2
 
 SYMBOL_MAP = {
+    "EURUSD": "EURUSD",
+    "GBPUSD": "GBPUSD",
+    "USDJPY": "USDJPY",
+    "XAUUSD": "XAUUSD",
+    "GOLD": "XAUUSD",
+    "XAGUSD": "XAGUSD",
+    "SILVER": "XAGUSD",
+    "BTCUSD": "BTCUSD",
+    "ETHUSD": "ETHUSD",
+    "NAS100": "NAS100",
+    "US100": "NAS100",
+    "SPX500": "SPX500",
+    "GER40": "GER40",
+    "US500": "SPX500",
+    "AAPL": "AAPL",
+    "AMZN": "AMZN",
     "EURUSD": "EURUSD.m",
     "GBPUSD": "GBPUSD.m",
     "USDJPY": "USDJPY.m",
