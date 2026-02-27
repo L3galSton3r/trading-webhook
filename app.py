@@ -5,7 +5,7 @@ from flask import Flask, request, jsonify
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
-from threading import Thread  # ← ADDED FOR BACKGROUND PROCESSING
+from threading import Thread
 
 app = Flask(__name__)
 
@@ -193,6 +193,9 @@ def find_trade_in_all_sheets(trade_id):
         print(f"[ERROR] Failed to search for Fibo trade: {e}")
         return None, None
 
+# ═══════════════════════════════════════════════════════════════════
+# ✅ FIX: Updated to handle ENTRY event from EA (includes all data)
+# ═══════════════════════════════════════════════════════════════════
 def log_entry_to_sheets(signal):
     try:
         sheet = get_or_create_daily_worksheet()
@@ -203,7 +206,24 @@ def log_entry_to_sheets(signal):
         date_str = now.strftime('%Y-%m-%d')
         time_str = now.strftime('%H:%M:%S')
         
-        risk_percent = 1.0 if signal.get('zone_type') == 'MAJOR' else 1.0
+        # Use timestamp from EA if provided
+        if 'timestamp' in signal:
+            try:
+                ts = signal['timestamp']
+                if ' ' in ts:
+                    date_str = ts.split(' ')[0]
+                    time_str = ts.split(' ')[1]
+            except:
+                pass
+        
+        zone_type = signal.get('zone_type', 'MINOR')
+        risk_percent = 0.75 if zone_type == 'MAJOR' else 0.40
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ FIX: Get entry price and lot size from EA's ENTRY event
+        # ═══════════════════════════════════════════════════════════════
+        entry_price = signal.get('entry', signal.get('price', ''))
+        lot_size = signal.get('lot_size', '')
         
         row = [
             signal.get('trade_id', ''),
@@ -211,21 +231,21 @@ def log_entry_to_sheets(signal):
             time_str,
             signal.get('symbol', ''),
             signal.get('direction', ''),
-            signal.get('zone_type', ''),
-            '',
+            zone_type,
+            entry_price,  # ✅ Now filled from EA
             signal.get('stop_loss', ''),
             signal.get('tp1', ''),
             signal.get('tp2', ''),
             signal.get('tp3', ''),
             signal.get('tp4', ''),
-            '',
+            lot_size,  # ✅ Now filled from EA
             f"{risk_percent}%",
             'Active',
             '', '', '', '', '', '', '', '', '',
         ]
         
         sheet.append_row(row, value_input_option='USER_ENTERED')
-        print(f"[SHEETS] Fibo entry logged to {sheet.title}: {signal.get('trade_id')}")
+        print(f"[SHEETS] ✅ ENTRY logged to {sheet.title}: {signal.get('trade_id')} | Entry: {entry_price} | Lots: {lot_size}")
         return True
     
     except Exception as e:
@@ -339,9 +359,6 @@ def update_trade_outcome(outcome):
             elif price != 0:
                 worksheet.update_cell(row_num, 8, price)
         
-        # ═══════════════════════════════════════════════════════════════
-        # SL_HIT - FIXED: Use text outcome, not broken R-multiple
-        # ═══════════════════════════════════════════════════════════════
         elif event == 'SL_HIT':
             worksheet.update_cell(row_num, 15, 'SL Hit - Closed')
             worksheet.update_cell(row_num, 23, timestamp)
@@ -352,7 +369,6 @@ def update_trade_outcome(outcome):
             if profit != 0:
                 worksheet.update_cell(row_num, 22, f"${profit:.2f}")
             
-            # Simple text outcome (removed broken R-multiple calculation)
             if profit == 0 or (profit > -1 and profit < 1):
                 worksheet.update_cell(row_num, 21, 'Breakeven')
             elif profit > 0:
@@ -387,7 +403,7 @@ def update_trade_outcome(outcome):
         return False
 
 # ═══════════════════════════════════════════════════════════════════
-# ORB SHEET FUNCTIONS (FIXED)
+# ORB SHEET FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════
 
 def get_or_create_orb_daily_worksheet():
@@ -479,6 +495,9 @@ def find_all_orb_trade_rows(trade_id):
         print(f"[ERROR] Failed to search for ORB trade rows: {e}")
         return None, []
 
+# ═══════════════════════════════════════════════════════════════════
+# ✅ FIX: Updated to handle ENTRY event from EA (includes all data)
+# ═══════════════════════════════════════════════════════════════════
 def log_orb_entry_to_sheets(signal):
     try:
         sheet = get_or_create_orb_daily_worksheet()
@@ -488,6 +507,22 @@ def log_orb_entry_to_sheets(signal):
         now = datetime.utcnow()
         date_str = now.strftime('%Y-%m-%d')
         time_str = now.strftime('%H:%M:%S')
+        
+        # Use timestamp from EA if provided
+        if 'timestamp' in signal:
+            try:
+                ts = signal['timestamp']
+                if ' ' in ts:
+                    date_str = ts.split(' ')[0]
+                    time_str = ts.split(' ')[1]
+            except:
+                pass
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ FIX: Get entry price and lot size from EA's ENTRY event
+        # ═══════════════════════════════════════════════════════════════
+        entry_price = signal.get('entry', signal.get('price', ''))
+        lot_size = signal.get('lot_size', '')
         
         row = [
             signal.get('trade_id', ''),
@@ -499,19 +534,19 @@ def log_orb_entry_to_sheets(signal):
             signal.get('orb_high', ''),
             signal.get('orb_low', ''),
             signal.get('orb_mid', ''),
-            '',
+            entry_price,  # ✅ Now filled from EA
             signal.get('stop_loss', ''),
             signal.get('tp1', ''),
             signal.get('tp2', ''),
             signal.get('tp3', ''),
-            '',
+            lot_size,  # ✅ Now filled from EA
             signal.get('risk_pts', ''),
-            'Pending',
+            'Active',
             '', '', '', '', '', '', '', '', '', '', '', ''
         ]
         
         sheet.append_row(row, value_input_option='USER_ENTERED')
-        print(f"[SHEETS] ORB signal logged to {sheet.title}: {signal.get('trade_id')}")
+        print(f"[SHEETS] ✅ ORB ENTRY logged to {sheet.title}: {signal.get('trade_id')} | Entry: {entry_price} | Lots: {lot_size}")
         return True
     
     except Exception as e:
@@ -741,7 +776,7 @@ def update_orb_trade_outcome(outcome):
         return False
 
 # ═══════════════════════════════════════════════════════════════════
-# ⚡ BACKGROUND PROCESSING FUNCTIONS (NEW - FIXES TIMEOUT)
+# ⚡ BACKGROUND PROCESSING FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════
 
 def process_fibo_background(data):
@@ -749,11 +784,14 @@ def process_fibo_background(data):
     try:
         print(f"[Background] Processing FIBO: {data.get('trade_id')}")
         
-        # Log to Google Sheets
-        if ENABLE_GOOGLE_LOGGING:
-            log_entry_to_sheets(data)
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ FIX: REMOVED - Don't log here! Only log when EA confirms ENTRY
+        # ═══════════════════════════════════════════════════════════════
+        # Old code (removed):
+        # if ENABLE_GOOGLE_LOGGING:
+        #     log_entry_to_sheets(data)
         
-        # Forward to local server
+        # Forward to local server (MT5 will send ENTRY event if executed)
         try:
             response = requests.post(
                 f"{TAILSCALE_URL}/fibo",
@@ -772,11 +810,14 @@ def process_orb_background(data):
     try:
         print(f"[Background] Processing ORB: {data.get('trade_id')}")
         
-        # Log to Google Sheets
-        if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
-            log_orb_entry_to_sheets(data)
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ FIX: REMOVED - Don't log here! Only log when EA confirms ENTRY
+        # ═══════════════════════════════════════════════════════════════
+        # Old code (removed):
+        # if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
+        #     log_orb_entry_to_sheets(data)
         
-        # Forward to local server
+        # Forward to local server (MT5 will send ENTRY event if executed)
         try:
             response = requests.post(
                 f"{TAILSCALE_URL}/orb",
@@ -797,9 +838,14 @@ def process_update_background(data):
         trade_id = data.get('trade_id', 'Unknown')
         print(f"[Background] Processing UPDATE: {event} for {trade_id}")
         
-        # Log to Google Sheets
         if ENABLE_GOOGLE_LOGGING:
-            update_trade_outcome(data)
+            # ═══════════════════════════════════════════════════════════════
+            # ✅ FIX: Log ENTRY here (when EA confirms trade executed)
+            # ═══════════════════════════════════════════════════════════════
+            if event == 'ENTRY':
+                log_entry_to_sheets(data)
+            else:
+                update_trade_outcome(data)
         
     except Exception as e:
         print(f"[Background] Error processing UPDATE: {e}")
@@ -811,22 +857,27 @@ def process_orb_update_background(data):
         trade_id = data.get('trade_id', 'Unknown')
         print(f"[Background] Processing ORB_UPDATE: {event} for {trade_id}")
         
-        # Log to Google Sheets
         if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
-            update_orb_trade_outcome(data)
+            # ═══════════════════════════════════════════════════════════════
+            # ✅ FIX: Log ENTRY here (when EA confirms trade executed)
+            # ═══════════════════════════════════════════════════════════════
+            if event == 'ENTRY':
+                log_orb_entry_to_sheets(data)
+            else:
+                update_orb_trade_outcome(data)
         
     except Exception as e:
         print(f"[Background] Error processing ORB_UPDATE: {e}")
 
 # ═══════════════════════════════════════════════════════════════════
-# WEBHOOK ENDPOINTS (FIXED - INSTANT RESPONSE)
+# WEBHOOK ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════
 
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "3.5 - FIXED: Instant Response (No Timeout)",
+        "version": "3.6 - Only Log After MT5 Entry Confirmation",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
@@ -852,23 +903,20 @@ def fibo_webhook():
         trade_id = data.get('trade_id', 'Unknown')
         print(f"[FIBO] Received: {trade_id}")
         
-        # Symbol mapping
         if 'symbol' in data:
             original_symbol = data['symbol']
             data['symbol'] = SYMBOL_MAP.get(original_symbol, original_symbol)
             if original_symbol != data['symbol']:
                 print(f"[FIBO] Symbol mapped: {original_symbol} -> {data['symbol']}")
         
-        # ═══════════════════════════════════════════════════════════════
-        # ✅ RESPOND IMMEDIATELY - Prevents timeout!
-        # ═══════════════════════════════════════════════════════════════
+        # Respond immediately
         response = jsonify({
             "status": "received",
             "trade_id": trade_id,
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        # Process in background thread (EA/TradingView doesn't wait)
+        # Process in background (forwards to MT5, NO sheet logging here)
         thread = Thread(target=process_fibo_background, args=(data,))
         thread.daemon = True
         thread.start()
@@ -890,23 +938,20 @@ def orb_webhook():
         trade_id = data.get('trade_id', 'Unknown')
         print(f"[ORB] Received: {trade_id}")
         
-        # Symbol mapping
         if 'symbol' in data:
             original_symbol = data['symbol']
             data['symbol'] = SYMBOL_MAP.get(original_symbol, original_symbol)
             if original_symbol != data['symbol']:
                 print(f"[ORB] Symbol mapped: {original_symbol} -> {data['symbol']}")
         
-        # ═══════════════════════════════════════════════════════════════
-        # ✅ RESPOND IMMEDIATELY - Prevents timeout!
-        # ═══════════════════════════════════════════════════════════════
+        # Respond immediately
         response = jsonify({
             "status": "received",
             "trade_id": trade_id,
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        # Process in background thread
+        # Process in background (forwards to MT5, NO sheet logging here)
         thread = Thread(target=process_orb_background, args=(data,))
         thread.daemon = True
         thread.start()
@@ -929,9 +974,7 @@ def update_webhook():
         trade_id = data.get('trade_id', 'Unknown')
         print(f"[UPDATE] Received: {event} for {trade_id}")
         
-        # ═══════════════════════════════════════════════════════════════
-        # ✅ RESPOND IMMEDIATELY - Prevents timeout!
-        # ═══════════════════════════════════════════════════════════════
+        # Respond immediately
         response = jsonify({
             "status": "received",
             "event": event,
@@ -939,7 +982,7 @@ def update_webhook():
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        # Process in background thread
+        # Process in background (ENTRY creates row, others update)
         thread = Thread(target=process_update_background, args=(data,))
         thread.daemon = True
         thread.start()
@@ -963,9 +1006,7 @@ def orb_update_webhook():
         profit = data.get('profit', 0)
         print(f"[ORB_UPDATE] Received: {event} for {trade_id} | P/L: ${profit:.2f}")
         
-        # ═══════════════════════════════════════════════════════════════
-        # ✅ RESPOND IMMEDIATELY - Prevents timeout!
-        # ═══════════════════════════════════════════════════════════════
+        # Respond immediately
         response = jsonify({
             "status": "received",
             "event": event,
@@ -973,7 +1014,7 @@ def orb_update_webhook():
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        # Process in background thread
+        # Process in background (ENTRY creates row, others update)
         thread = Thread(target=process_orb_update_background, args=(data,))
         thread.daemon = True
         thread.start()
@@ -988,7 +1029,7 @@ def orb_update_webhook():
 def health():
     return jsonify({
         "status": "running",
-        "version": "3.5 - Instant Response Fix",
+        "version": "3.6 - Only Log After MT5 Entry",
         "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
         "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "timestamp": datetime.utcnow().isoformat()
@@ -1000,7 +1041,7 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"[STARTUP] Trading Webhook v3.5 - TIMEOUT FIX APPLIED")
-    print(f"[STARTUP] Instant response mode enabled")
+    print(f"[STARTUP] Trading Webhook v3.6 - Only Log After MT5 Entry Confirmation")
+    print(f"[STARTUP] Sheet only shows EXECUTED trades now!")
     print(f"[STARTUP] Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
