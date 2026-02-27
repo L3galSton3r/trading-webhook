@@ -2,7 +2,7 @@ import os
 import json
 import requests
 from flask import Flask, request, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta  # ✅ Added timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 from threading import Thread, Lock
@@ -153,21 +153,85 @@ def get_or_create_daily_worksheet():
             print(f"[SHEETS] Creating new Fibo sheet: {sheet_name}")
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=24)
             
+            # ═══════════════════════════════════════════════════════════════
+            # ✅ GET STARTING BALANCE FROM YESTERDAY'S SHEET (AUTO)
+            # ═══════════════════════════════════════════════════════════════
+            starting_balance = 0.0
+            try:
+                yesterday = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+                yesterday_sheet = spreadsheet.worksheet(yesterday)
+                
+                # Get yesterday's Current Balance (cell B3)
+                yesterday_balance = yesterday_sheet.cell(3, 2).value
+                if yesterday_balance:
+                    starting_balance = parse_dollar_value(yesterday_balance)
+                    print(f"[SHEETS] ✅ Pulled starting balance from {yesterday}: ${starting_balance:.2f}")
+            except Exception as e:
+                print(f"[SHEETS] No previous sheet found, starting balance = $0.00 ({e})")
+            
+            # ═══════════════════════════════════════════════════════════════
+            # ✅ ADD SUMMARY SECTION
+            # ═══════════════════════════════════════════════════════════════
+            
+            # Row 1: Title
+            worksheet.update('A1:X1', [['📊 DAILY PERFORMANCE SUMMARY']], value_input_option='USER_ENTERED')
+            worksheet.merge_cells('A1:X1')
+            worksheet.format('A1', {
+                "backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.8},
+                "textFormat": {"bold": True, "fontSize": 14, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                "horizontalAlignment": "CENTER"
+            })
+            
+            # Row 2: Starting Balance (AUTO-POPULATED)
+            worksheet.update('A2', [['Starting Balance:']], value_input_option='USER_ENTERED')
+            worksheet.update('B2', [[f'${starting_balance:.2f}']], value_input_option='USER_ENTERED')
+            worksheet.format('A2:B2', {"textFormat": {"bold": True}})
+            
+            # Row 3: Current Balance (Formula)
+            worksheet.update('A3', [['Current Balance:']], value_input_option='USER_ENTERED')
+            worksheet.update('B3', [['=B2+SUM(V9:V)']], value_input_option='USER_ENTERED')
+            worksheet.format('A3:B3', {"textFormat": {"bold": True}})
+            
+            # Row 4: Daily P/L (Formula)
+            worksheet.update('A4', [['Daily P/L:']], value_input_option='USER_ENTERED')
+            worksheet.update('B4', [['=B3-B2']], value_input_option='USER_ENTERED')
+            worksheet.update('C4', [['=IF(B2>0,(B4/B2)*100,0)&"%"']], value_input_option='USER_ENTERED')
+            worksheet.format('A4:C4', {"textFormat": {"bold": True}})
+            
+            # Stats - Right Side
+            worksheet.update('D2', [['Total Trades:']], value_input_option='USER_ENTERED')
+            worksheet.update('E2', [['=COUNTA(O9:O)-COUNTIF(O9:O,"Active")']], value_input_option='USER_ENTERED')
+            
+            worksheet.update('D3', [['Wins:']], value_input_option='USER_ENTERED')
+            worksheet.update('E3', [['=COUNTIF(U9:U,"Win*")']], value_input_option='USER_ENTERED')
+            
+            worksheet.update('D4', [['Losses:']], value_input_option='USER_ENTERED')
+            worksheet.update('E4', [['=COUNTIF(U9:U,"Loss*")']], value_input_option='USER_ENTERED')
+            
+            worksheet.update('D5', [['Win Rate:']], value_input_option='USER_ENTERED')
+            worksheet.update('E5', [['=IF(E2>0,E3/E2*100,0)&"%"']], value_input_option='USER_ENTERED')
+            
+            # Row 6: Separator
+            worksheet.update('A6:X6', [['═══════════════════════════════════════════════════════════════════════════']], value_input_option='USER_ENTERED')
+            worksheet.merge_cells('A6:X6')
+            worksheet.format('A6', {"horizontalAlignment": "CENTER", "textFormat": {"foregroundColor": {"red": 0.5, "green": 0.5, "blue": 0.5}}})
+            
+            # Row 8: Column Headers
             headers = [
                 'Trade ID', 'Date', 'Time', 'Symbol', 'Direction', 'Zone Type',
                 'Entry Price', 'Stop Loss', 'TP1', 'TP2', 'TP3', 'TP4',
                 'Lot Size', 'Risk %', 'Status', 'TP1 Hit', 'TP2 Hit', 'TP3 Hit',
                 'TP4 Hit', 'BE Moved', 'Final Outcome', 'Profit/Loss', 'Exit Time', 'Duration'
             ]
-            worksheet.append_row(headers, value_input_option='USER_ENTERED')
+            worksheet.update('A8:X8', [headers], value_input_option='USER_ENTERED')
             
-            worksheet.format('A1:X1', {
+            worksheet.format('A8:X8', {
                 "backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.8},
                 "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
                 "horizontalAlignment": "CENTER"
             })
             
-            print(f"[SHEETS] New Fibo sheet created: {sheet_name}")
+            print(f"[SHEETS] ✅ New sheet created with auto starting balance: ${starting_balance:.2f}")
             return worksheet
     
     except Exception as e:
@@ -198,9 +262,6 @@ def find_trade_in_all_sheets(trade_id):
         print(f"[ERROR] Failed to search for Fibo trade: {e}")
         return None, None
 
-# ═══════════════════════════════════════════════════════════════════
-# ✅ FIXED: log_entry_to_sheets with lock and insert_row
-# ═══════════════════════════════════════════════════════════════════
 def log_entry_to_sheets(signal):
     with sheets_lock:
         try:
@@ -247,13 +308,12 @@ def log_entry_to_sheets(signal):
             ]
             
             # ═══════════════════════════════════════════════════════════════
-            # ✅ FIX: Force fresh row count and insert at specific row
+            # ✅ Start at row 9 (after summary section)
             # ═══════════════════════════════════════════════════════════════
             all_values = sheet.get_all_values()
-            next_row = len(all_values) + 1
+            next_row = max(9, len(all_values) + 1)
             
             sheet.insert_row(row, next_row, value_input_option='USER_ENTERED')
-            # ═══════════════════════════════════════════════════════════════
             
             print(f"[SHEETS] ✅ ENTRY logged to {sheet.title} (row {next_row}): {signal.get('trade_id')} | Entry: {entry_price} | Lots: {lot_size}")
             return True
@@ -505,9 +565,6 @@ def find_all_orb_trade_rows(trade_id):
         print(f"[ERROR] Failed to search for ORB trade rows: {e}")
         return None, []
 
-# ═══════════════════════════════════════════════════════════════════
-# ✅ FIXED: log_orb_entry_to_sheets with lock and insert_row
-# ═══════════════════════════════════════════════════════════════════
 def log_orb_entry_to_sheets(signal):
     with sheets_lock:
         try:
@@ -552,14 +609,10 @@ def log_orb_entry_to_sheets(signal):
                 '', '', '', '', '', '', '', '', '', '', '', ''
             ]
             
-            # ═══════════════════════════════════════════════════════════════
-            # ✅ FIX: Force fresh row count and insert at specific row
-            # ═══════════════════════════════════════════════════════════════
             all_values = sheet.get_all_values()
             next_row = len(all_values) + 1
             
             sheet.insert_row(row, next_row, value_input_option='USER_ENTERED')
-            # ═══════════════════════════════════════════════════════════════
             
             print(f"[SHEETS] ✅ ORB ENTRY logged to {sheet.title} (row {next_row}): {signal.get('trade_id')} | Entry: {entry_price} | Lots: {lot_size}")
             return True
@@ -795,11 +848,9 @@ def update_orb_trade_outcome(outcome):
 # ═══════════════════════════════════════════════════════════════════
 
 def process_fibo_background(data):
-    """Background processing for FIBO signals - EA doesn't wait"""
     try:
         print(f"[Background] Processing FIBO: {data.get('trade_id')}")
         
-        # Forward to local server (MT5 will send ENTRY event if executed)
         try:
             response = requests.post(
                 f"{TAILSCALE_URL}/fibo",
@@ -814,11 +865,9 @@ def process_fibo_background(data):
         print(f"[Background] Error processing FIBO: {e}")
 
 def process_orb_background(data):
-    """Background processing for ORB signals - EA doesn't wait"""
     try:
         print(f"[Background] Processing ORB: {data.get('trade_id')}")
         
-        # Forward to local server (MT5 will send ENTRY event if executed)
         try:
             response = requests.post(
                 f"{TAILSCALE_URL}/orb",
@@ -833,7 +882,6 @@ def process_orb_background(data):
         print(f"[Background] Error processing ORB: {e}")
 
 def process_update_background(data):
-    """Background processing for outcome updates - EA doesn't wait"""
     try:
         event = data.get('event', 'Unknown')
         trade_id = data.get('trade_id', 'Unknown')
@@ -849,7 +897,6 @@ def process_update_background(data):
         print(f"[Background] Error processing UPDATE: {e}")
 
 def process_orb_update_background(data):
-    """Background processing for ORB outcome updates - EA doesn't wait"""
     try:
         event = data.get('event', 'Unknown')
         trade_id = data.get('trade_id', 'Unknown')
@@ -872,7 +919,7 @@ def process_orb_update_background(data):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "3.7 - Fixed Race Condition with Lock + insert_row",
+        "version": "3.9 - Auto Balance Summary",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
@@ -904,14 +951,12 @@ def fibo_webhook():
             if original_symbol != data['symbol']:
                 print(f"[FIBO] Symbol mapped: {original_symbol} -> {data['symbol']}")
         
-        # Respond immediately
         response = jsonify({
             "status": "received",
             "trade_id": trade_id,
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        # Process in background
         thread = Thread(target=process_fibo_background, args=(data,))
         thread.daemon = True
         thread.start()
@@ -939,14 +984,12 @@ def orb_webhook():
             if original_symbol != data['symbol']:
                 print(f"[ORB] Symbol mapped: {original_symbol} -> {data['symbol']}")
         
-        # Respond immediately
         response = jsonify({
             "status": "received",
             "trade_id": trade_id,
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        # Process in background
         thread = Thread(target=process_orb_background, args=(data,))
         thread.daemon = True
         thread.start()
@@ -969,7 +1012,6 @@ def update_webhook():
         trade_id = data.get('trade_id', 'Unknown')
         print(f"[UPDATE] Received: {event} for {trade_id}")
         
-        # Respond immediately
         response = jsonify({
             "status": "received",
             "event": event,
@@ -977,7 +1019,6 @@ def update_webhook():
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        # Process in background
         thread = Thread(target=process_update_background, args=(data,))
         thread.daemon = True
         thread.start()
@@ -1001,7 +1042,6 @@ def orb_update_webhook():
         profit = data.get('profit', 0)
         print(f"[ORB_UPDATE] Received: {event} for {trade_id} | P/L: ${profit:.2f}")
         
-        # Respond immediately
         response = jsonify({
             "status": "received",
             "event": event,
@@ -1009,7 +1049,6 @@ def orb_update_webhook():
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        # Process in background
         thread = Thread(target=process_orb_update_background, args=(data,))
         thread.daemon = True
         thread.start()
@@ -1024,7 +1063,7 @@ def orb_update_webhook():
 def health():
     return jsonify({
         "status": "running",
-        "version": "3.7 - Fixed Race Condition",
+        "version": "3.9 - Auto Balance Summary",
         "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
         "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "timestamp": datetime.utcnow().isoformat()
@@ -1036,7 +1075,7 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"[STARTUP] Trading Webhook v3.7 - Fixed Race Condition")
-    print(f"[STARTUP] Lock + insert_row prevents row overwrites")
+    print(f"[STARTUP] Trading Webhook v3.9 - Auto Balance Summary")
+    print(f"[STARTUP] New sheets auto-pull starting balance from yesterday")
     print(f"[STARTUP] Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
