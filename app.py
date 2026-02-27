@@ -181,15 +181,15 @@ def get_or_create_daily_worksheet():
                 "horizontalAlignment": "CENTER"
             })
             
-            # Row 2: Starting Balance (AS NUMBER - NOT TEXT)
+            # Row 2: Starting Balance (AS NUMBER)
             worksheet.update('A2', [['Starting Balance:']], value_input_option='USER_ENTERED')
             worksheet.update('B2', [[starting_balance]], value_input_option='USER_ENTERED')
             worksheet.format('A2:B2', {"textFormat": {"bold": True}})
             worksheet.format('B2', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
             
-            # Row 3: Current Balance (Formula - handles $ in Profit/Loss column)
+            # Row 3: Current Balance (FIXED FORMULA)
             worksheet.update('A3', [['Current Balance:']], value_input_option='USER_ENTERED')
-            worksheet.update('B3', [['=B2+SUMPRODUCT(--(V9:V<>""),VALUE(SUBSTITUTE(SUBSTITUTE(V9:V,"$",""),",","")))']], value_input_option='USER_ENTERED')
+            worksheet.update('B3', [['=B2+SUMPRODUCT((V9:V<>"")*VALUE(SUBSTITUTE(SUBSTITUTE(V9:V,"$",""),",","")))']], value_input_option='USER_ENTERED')
             worksheet.format('A3:B3', {"textFormat": {"bold": True}})
             worksheet.format('B3', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
             
@@ -200,9 +200,9 @@ def get_or_create_daily_worksheet():
             worksheet.format('A4:C4', {"textFormat": {"bold": True}})
             worksheet.format('B4', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
             
-            # Stats - Right Side
+            # Stats - Right Side (FIXED FORMULAS)
             worksheet.update('D2', [['Total Trades:']], value_input_option='USER_ENTERED')
-            worksheet.update('E2', [['=COUNTA(O9:O)-COUNTIF(O9:O,"Active")']], value_input_option='USER_ENTERED')
+            worksheet.update('E2', [['=COUNTIF(O9:O,"*Closed*")']], value_input_option='USER_ENTERED')
             
             worksheet.update('D3', [['Wins:']], value_input_option='USER_ENTERED')
             worksheet.update('E3', [['=COUNTIF(U9:U,"Win*")+COUNTIF(U9:U,"Closed at BE*")']], value_input_option='USER_ENTERED')
