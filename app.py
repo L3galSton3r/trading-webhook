@@ -189,7 +189,7 @@ def get_or_create_daily_worksheet():
             
             # Row 3: Current Balance (FIXED FORMULA)
             worksheet.update('A3', [['Current Balance:']], value_input_option='USER_ENTERED')
-            worksheet.update('B3', [['=B2+SUMPRODUCT((V9:V<>"")*VALUE(SUBSTITUTE(SUBSTITUTE(V9:V,"$",""),",","")))']], value_input_option='USER_ENTERED')
+            worksheet.update('B3', [['=B2+SUMPRODUCT((LEN(V9:V)>0)*VALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(V9:V,"$",""),",","")," ","")))']], value_input_option='USER_ENTERED')
             worksheet.format('A3:B3', {"textFormat": {"bold": True}})
             worksheet.format('B3', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
             
@@ -205,10 +205,10 @@ def get_or_create_daily_worksheet():
             worksheet.update('E2', [['=COUNTIF(O9:O,"*Closed*")']], value_input_option='USER_ENTERED')
             
             worksheet.update('D3', [['Wins:']], value_input_option='USER_ENTERED')
-            worksheet.update('E3', [['=COUNTIF(U9:U,"Win*")+COUNTIF(U9:U,"Closed at BE*")']], value_input_option='USER_ENTERED')
+            worksheet.update('E3', [['=COUNTIF(U9:U,"Win")+COUNTIF(U9:U,"Win*")+COUNTIF(U9:U,"Closed at BE*")']], value_input_option='USER_ENTERED')
             
             worksheet.update('D4', [['Losses:']], value_input_option='USER_ENTERED')
-            worksheet.update('E4', [['=COUNTIF(U9:U,"Loss*")']], value_input_option='USER_ENTERED')
+            worksheet.update('E4', [['=COUNTIF(U9:U,"Loss")']], value_input_option='USER_ENTERED')
             
             worksheet.update('D5', [['Win Rate:']], value_input_option='USER_ENTERED')
             worksheet.update('E5', [['=IF(E2>0,TEXT(E3/E2*100,"0.0")&"%","0%")']], value_input_option='USER_ENTERED')
