@@ -169,7 +169,7 @@ def get_or_create_daily_worksheet():
                 print(f"[SHEETS] No previous sheet found, starting balance = $0.00 ({e})")
             
             # ═══════════════════════════════════════════════════════════════
-            # ✅ ADD SUMMARY SECTION (FIXED FORMULAS)
+            # ✅ ADD SUMMARY SECTION (FINAL FIXED FORMULAS)
             # ═══════════════════════════════════════════════════════════════
             
             # Row 1: Title
@@ -200,12 +200,12 @@ def get_or_create_daily_worksheet():
             worksheet.format('A4:C4', {"textFormat": {"bold": True}})
             worksheet.format('B4', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
             
-            # Stats - Right Side (FIXED FORMULAS)
+            # Stats - Right Side (FINAL FIXED FORMULAS)
             worksheet.update('D2', [['Total Trades:']], value_input_option='USER_ENTERED')
             worksheet.update('E2', [['=COUNTIF(O9:O,"*Closed*")']], value_input_option='USER_ENTERED')
             
             worksheet.update('D3', [['Wins:']], value_input_option='USER_ENTERED')
-            worksheet.update('E3', [['=COUNTIF(U9:U,"Win")+COUNTIF(U9:U,"Win*")+COUNTIF(U9:U,"Closed at BE*")']], value_input_option='USER_ENTERED')
+            worksheet.update('E3', [['=COUNTIF(U9:U,"Win")+COUNTIF(U9:U,"Closed at BE*")']], value_input_option='USER_ENTERED')
             
             worksheet.update('D4', [['Losses:']], value_input_option='USER_ENTERED')
             worksheet.update('E4', [['=COUNTIF(U9:U,"Loss")']], value_input_option='USER_ENTERED')
