@@ -308,15 +308,13 @@ def log_entry_to_sheets(signal):
                 '', '', '', '', '', '', '', '', '',
             ]
             
-            # ═══════════════════════════════════════════════════════════════
-            # ✅ Start at row 9 (after summary section)
-            # ═══════════════════════════════════════════════════════════════
+            # ✅ FIXED: Use append_row instead of insert_row
+            sheet.append_row(row, value_input_option='USER_ENTERED')
+            
             all_values = sheet.get_all_values()
-            next_row = max(9, len(all_values) + 1)
+            actual_row = len(all_values)
             
-            sheet.insert_row(row, next_row, value_input_option='USER_ENTERED')
-            
-            print(f"[SHEETS] ✅ ENTRY logged to {sheet.title} (row {next_row}): {signal.get('trade_id')} | Entry: {entry_price} | Lots: {lot_size}")
+            print(f"[SHEETS] ✅ ENTRY logged to {sheet.title} (row {actual_row}): {signal.get('trade_id')} | Entry: {entry_price} | Lots: {lot_size}")
             return True
         
         except Exception as e:
