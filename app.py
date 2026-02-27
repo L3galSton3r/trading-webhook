@@ -135,7 +135,6 @@ def parse_dollar_value(value_str):
 # ═══════════════════════════════════════════════════════════════════
 # FIBO SHEET FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════
-
 def get_or_create_daily_worksheet():
     try:
         spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID)
@@ -170,7 +169,7 @@ def get_or_create_daily_worksheet():
                 print(f"[SHEETS] No previous sheet found, starting balance = $0.00 ({e})")
             
             # ═══════════════════════════════════════════════════════════════
-            # ✅ ADD SUMMARY SECTION
+            # ✅ ADD SUMMARY SECTION (FIXED FORMULAS)
             # ═══════════════════════════════════════════════════════════════
             
             # Row 1: Title
@@ -182,34 +181,37 @@ def get_or_create_daily_worksheet():
                 "horizontalAlignment": "CENTER"
             })
             
-            # Row 2: Starting Balance (AUTO-POPULATED)
+            # Row 2: Starting Balance (AS NUMBER - NOT TEXT)
             worksheet.update('A2', [['Starting Balance:']], value_input_option='USER_ENTERED')
-            worksheet.update('B2', [[f'${starting_balance:.2f}']], value_input_option='USER_ENTERED')
+            worksheet.update('B2', [[starting_balance]], value_input_option='USER_ENTERED')
             worksheet.format('A2:B2', {"textFormat": {"bold": True}})
+            worksheet.format('B2', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
             
-            # Row 3: Current Balance (Formula)
+            # Row 3: Current Balance (Formula - handles $ in Profit/Loss column)
             worksheet.update('A3', [['Current Balance:']], value_input_option='USER_ENTERED')
-            worksheet.update('B3', [['=B2+SUM(V9:V)']], value_input_option='USER_ENTERED')
+            worksheet.update('B3', [['=B2+SUMPRODUCT(--(V9:V<>""),VALUE(SUBSTITUTE(SUBSTITUTE(V9:V,"$",""),",","")))']], value_input_option='USER_ENTERED')
             worksheet.format('A3:B3', {"textFormat": {"bold": True}})
+            worksheet.format('B3', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
             
             # Row 4: Daily P/L (Formula)
             worksheet.update('A4', [['Daily P/L:']], value_input_option='USER_ENTERED')
             worksheet.update('B4', [['=B3-B2']], value_input_option='USER_ENTERED')
-            worksheet.update('C4', [['=IF(B2>0,(B4/B2)*100,0)&"%"']], value_input_option='USER_ENTERED')
+            worksheet.update('C4', [['=IF(B2>0,TEXT(B4/B2*100,"0.00")&"%","0%")']], value_input_option='USER_ENTERED')
             worksheet.format('A4:C4', {"textFormat": {"bold": True}})
+            worksheet.format('B4', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
             
             # Stats - Right Side
             worksheet.update('D2', [['Total Trades:']], value_input_option='USER_ENTERED')
             worksheet.update('E2', [['=COUNTA(O9:O)-COUNTIF(O9:O,"Active")']], value_input_option='USER_ENTERED')
             
             worksheet.update('D3', [['Wins:']], value_input_option='USER_ENTERED')
-            worksheet.update('E3', [['=COUNTIF(U9:U,"Win*")']], value_input_option='USER_ENTERED')
+            worksheet.update('E3', [['=COUNTIF(U9:U,"Win*")+COUNTIF(U9:U,"Closed at BE*")']], value_input_option='USER_ENTERED')
             
             worksheet.update('D4', [['Losses:']], value_input_option='USER_ENTERED')
             worksheet.update('E4', [['=COUNTIF(U9:U,"Loss*")']], value_input_option='USER_ENTERED')
             
             worksheet.update('D5', [['Win Rate:']], value_input_option='USER_ENTERED')
-            worksheet.update('E5', [['=IF(E2>0,E3/E2*100,0)&"%"']], value_input_option='USER_ENTERED')
+            worksheet.update('E5', [['=IF(E2>0,TEXT(E3/E2*100,"0.0")&"%","0%")']], value_input_option='USER_ENTERED')
             
             # Row 6: Separator
             worksheet.update('A6:X6', [['═══════════════════════════════════════════════════════════════════════════']], value_input_option='USER_ENTERED')
@@ -237,7 +239,6 @@ def get_or_create_daily_worksheet():
     except Exception as e:
         print(f"[ERROR] Failed to get/create Fibo daily worksheet: {e}")
         return None
-
 def find_trade_in_all_sheets(trade_id):
     try:
         spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID)
