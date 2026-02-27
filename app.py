@@ -5,6 +5,7 @@ from flask import Flask, request, jsonify
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
+from threading import Thread  # ← ADDED FOR BACKGROUND PROCESSING
 
 app = Flask(__name__)
 
@@ -740,14 +741,92 @@ def update_orb_trade_outcome(outcome):
         return False
 
 # ═══════════════════════════════════════════════════════════════════
-# WEBHOOK ENDPOINTS
+# ⚡ BACKGROUND PROCESSING FUNCTIONS (NEW - FIXES TIMEOUT)
+# ═══════════════════════════════════════════════════════════════════
+
+def process_fibo_background(data):
+    """Background processing for FIBO signals - EA doesn't wait"""
+    try:
+        print(f"[Background] Processing FIBO: {data.get('trade_id')}")
+        
+        # Log to Google Sheets
+        if ENABLE_GOOGLE_LOGGING:
+            log_entry_to_sheets(data)
+        
+        # Forward to local server
+        try:
+            response = requests.post(
+                f"{TAILSCALE_URL}/fibo",
+                json=data,
+                timeout=10
+            )
+            print(f"[Background] Forwarded FIBO to local: {response.status_code}")
+        except Exception as e:
+            print(f"[Background] Failed to forward FIBO: {e}")
+        
+    except Exception as e:
+        print(f"[Background] Error processing FIBO: {e}")
+
+def process_orb_background(data):
+    """Background processing for ORB signals - EA doesn't wait"""
+    try:
+        print(f"[Background] Processing ORB: {data.get('trade_id')}")
+        
+        # Log to Google Sheets
+        if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
+            log_orb_entry_to_sheets(data)
+        
+        # Forward to local server
+        try:
+            response = requests.post(
+                f"{TAILSCALE_URL}/orb",
+                json=data,
+                timeout=10
+            )
+            print(f"[Background] Forwarded ORB to local: {response.status_code}")
+        except Exception as e:
+            print(f"[Background] Failed to forward ORB: {e}")
+        
+    except Exception as e:
+        print(f"[Background] Error processing ORB: {e}")
+
+def process_update_background(data):
+    """Background processing for outcome updates - EA doesn't wait"""
+    try:
+        event = data.get('event', 'Unknown')
+        trade_id = data.get('trade_id', 'Unknown')
+        print(f"[Background] Processing UPDATE: {event} for {trade_id}")
+        
+        # Log to Google Sheets
+        if ENABLE_GOOGLE_LOGGING:
+            update_trade_outcome(data)
+        
+    except Exception as e:
+        print(f"[Background] Error processing UPDATE: {e}")
+
+def process_orb_update_background(data):
+    """Background processing for ORB outcome updates - EA doesn't wait"""
+    try:
+        event = data.get('event', 'Unknown')
+        trade_id = data.get('trade_id', 'Unknown')
+        print(f"[Background] Processing ORB_UPDATE: {event} for {trade_id}")
+        
+        # Log to Google Sheets
+        if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
+            update_orb_trade_outcome(data)
+        
+    except Exception as e:
+        print(f"[Background] Error processing ORB_UPDATE: {e}")
+
+# ═══════════════════════════════════════════════════════════════════
+# WEBHOOK ENDPOINTS (FIXED - INSTANT RESPONSE)
 # ═══════════════════════════════════════════════════════════════════
 
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "3.4 - Fixed SL_HIT R-Multiple Bug",
+        "version": "3.5 - FIXED: Instant Response (No Timeout)",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
@@ -770,28 +849,31 @@ def fibo_webhook():
         if not data:
             return jsonify({"status": "error", "message": "No data received"}), 400
         
-        print(f"[FIBO] Received: {data.get('trade_id', 'Unknown')}")
+        trade_id = data.get('trade_id', 'Unknown')
+        print(f"[FIBO] Received: {trade_id}")
         
+        # Symbol mapping
         if 'symbol' in data:
             original_symbol = data['symbol']
             data['symbol'] = SYMBOL_MAP.get(original_symbol, original_symbol)
             if original_symbol != data['symbol']:
                 print(f"[FIBO] Symbol mapped: {original_symbol} -> {data['symbol']}")
         
-        if ENABLE_GOOGLE_LOGGING:
-            log_entry_to_sheets(data)
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ RESPOND IMMEDIATELY - Prevents timeout!
+        # ═══════════════════════════════════════════════════════════════
+        response = jsonify({
+            "status": "received",
+            "trade_id": trade_id,
+            "timestamp": datetime.utcnow().isoformat()
+        })
         
-        try:
-            response = requests.post(
-                f"{TAILSCALE_URL}/fibo",
-                json=data,
-                timeout=10
-            )
-            print(f"[FIBO] Forwarded to local: {response.status_code}")
-        except Exception as e:
-            print(f"[ERROR] Failed to forward: {e}")
+        # Process in background thread (EA/TradingView doesn't wait)
+        thread = Thread(target=process_fibo_background, args=(data,))
+        thread.daemon = True
+        thread.start()
         
-        return jsonify({"status": "success", "forwarded": True, "logged": ENABLE_GOOGLE_LOGGING})
+        return response, 200
     
     except Exception as e:
         print(f"[ERROR] /fibo error: {e}")
@@ -805,28 +887,31 @@ def orb_webhook():
         if not data:
             return jsonify({"status": "error", "message": "No data received"}), 400
         
-        print(f"[ORB] Received: {data.get('trade_id', 'Unknown')}")
+        trade_id = data.get('trade_id', 'Unknown')
+        print(f"[ORB] Received: {trade_id}")
         
+        # Symbol mapping
         if 'symbol' in data:
             original_symbol = data['symbol']
             data['symbol'] = SYMBOL_MAP.get(original_symbol, original_symbol)
             if original_symbol != data['symbol']:
                 print(f"[ORB] Symbol mapped: {original_symbol} -> {data['symbol']}")
         
-        if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
-            log_orb_entry_to_sheets(data)
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ RESPOND IMMEDIATELY - Prevents timeout!
+        # ═══════════════════════════════════════════════════════════════
+        response = jsonify({
+            "status": "received",
+            "trade_id": trade_id,
+            "timestamp": datetime.utcnow().isoformat()
+        })
         
-        try:
-            response = requests.post(
-                f"{TAILSCALE_URL}/orb",
-                json=data,
-                timeout=10
-            )
-            print(f"[ORB] Forwarded to local: {response.status_code}")
-        except Exception as e:
-            print(f"[ERROR] Failed to forward: {e}")
+        # Process in background thread
+        thread = Thread(target=process_orb_background, args=(data,))
+        thread.daemon = True
+        thread.start()
         
-        return jsonify({"status": "success", "forwarded": True, "logged": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB)})
+        return response, 200
     
     except Exception as e:
         print(f"[ERROR] /orb error: {e}")
@@ -840,12 +925,26 @@ def update_webhook():
         if not data:
             return jsonify({"status": "error", "message": "No data received"}), 400
         
-        print(f"[UPDATE] Received: {data.get('event', 'Unknown')} for {data.get('trade_id', 'Unknown')}")
+        event = data.get('event', 'Unknown')
+        trade_id = data.get('trade_id', 'Unknown')
+        print(f"[UPDATE] Received: {event} for {trade_id}")
         
-        if ENABLE_GOOGLE_LOGGING:
-            update_trade_outcome(data)
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ RESPOND IMMEDIATELY - Prevents timeout!
+        # ═══════════════════════════════════════════════════════════════
+        response = jsonify({
+            "status": "received",
+            "event": event,
+            "trade_id": trade_id,
+            "timestamp": datetime.utcnow().isoformat()
+        })
         
-        return jsonify({"status": "success", "logged": ENABLE_GOOGLE_LOGGING})
+        # Process in background thread
+        thread = Thread(target=process_update_background, args=(data,))
+        thread.daemon = True
+        thread.start()
+        
+        return response, 200
     
     except Exception as e:
         print(f"[ERROR] /update error: {e}")
@@ -862,28 +961,34 @@ def orb_update_webhook():
         event = data.get('event', 'Unknown')
         trade_id = data.get('trade_id', 'Unknown')
         profit = data.get('profit', 0)
-        commission = data.get('commission', 0)
-        swap = data.get('swap', 0)
-        net_pnl = data.get('net_pnl', profit + commission + swap)
+        print(f"[ORB_UPDATE] Received: {event} for {trade_id} | P/L: ${profit:.2f}")
         
-        print(f"[ORB_UPDATE] {event} for {trade_id} | Profit: ${profit:.2f} | Comm: ${commission:.2f} | Swap: ${swap:.2f} | Net: ${net_pnl:.2f}")
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ RESPOND IMMEDIATELY - Prevents timeout!
+        # ═══════════════════════════════════════════════════════════════
+        response = jsonify({
+            "status": "received",
+            "event": event,
+            "trade_id": trade_id,
+            "timestamp": datetime.utcnow().isoformat()
+        })
         
-        if ENABLE_GOOGLE_LOGGING and GOOGLE_SHEET_ID_ORB:
-            update_orb_trade_outcome(data)
+        # Process in background thread
+        thread = Thread(target=process_orb_update_background, args=(data,))
+        thread.daemon = True
+        thread.start()
         
-        return jsonify({"status": "success", "logged": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB)})
+        return response, 200
     
     except Exception as e:
         print(f"[ERROR] /orb_update error: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
         "status": "running",
-        "version": "3.4",
+        "version": "3.5 - Instant Response Fix",
         "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
         "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "timestamp": datetime.utcnow().isoformat()
@@ -895,6 +1000,7 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"[STARTUP] Trading Webhook v3.4 - Fixed SL_HIT R-Multiple Bug")
+    print(f"[STARTUP] Trading Webhook v3.5 - TIMEOUT FIX APPLIED")
+    print(f"[STARTUP] Instant response mode enabled")
     print(f"[STARTUP] Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
