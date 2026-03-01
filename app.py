@@ -23,7 +23,22 @@ ENABLE_GOOGLE_LOGGING = os.environ.get('ENABLE_GOOGLE_LOGGING', 'true').lower() 
 GOOGLE_SHEET_ID = os.environ.get('GOOGLE_SHEET_ID', '')
 GOOGLE_SHEET_ID_ORB = os.environ.get('GOOGLE_SHEET_ID_ORB', '')
 TIMEZONE_OFFSET = 2
-ACCOUNT_PREFIX = os.environ.get('ACCOUNT_PREFIX', 'FTMO')
+# ══════════════════════════════════════════════════════════════
+# ✅ AUTO ACCOUNT DETECTION - Maps account numbers to prefixes
+# ══════════════════════════════════════════════════════════════
+ACCOUNT_MAPPING = {
+    2001470183: "JM",      # JustMarkets-Demo
+    1512630376: "FTMO",    # FTMO-Demo
+}
+
+def get_sheet_prefix(account_number):
+    """Auto-detect sheet prefix based on account number"""
+    prefix = ACCOUNT_MAPPING.get(account_number)
+    if prefix:
+        return prefix
+    # Fallback if account not mapped
+    return f"ACC{account_number}"
+# ══════════════════════════════════════════════════════════════
 
 SYMBOL_MAP = {
     "EURUSD": "EURUSD",
@@ -136,14 +151,20 @@ def parse_dollar_value(value_str):
 # ═══════════════════════════════════════════════════════════════════
 # FIBO SHEET FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════
-def get_or_create_daily_worksheet():
+def get_or_create_daily_worksheet(account_number=None):
     try:
         spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID)
         if not spreadsheet:
             return None
         
+        # ✅ Auto-detect prefix from account number
+        if account_number:
+            prefix = get_sheet_prefix(account_number)
+        else:
+            prefix = "UNKNOWN"
+        
         today = datetime.utcnow()
-        sheet_name = f"{ACCOUNT_PREFIX}-{today.strftime('%Y-%m-%d')}"
+        sheet_name = f"{prefix}-{today.strftime('%Y-%m-%d')}"
         
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
@@ -158,7 +179,7 @@ def get_or_create_daily_worksheet():
             # ═══════════════════════════════════════════════════════════════
             starting_balance = 0.0
             try:
-                yesterday = f"{ACCOUNT_PREFIX}-{(datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')}"
+                yesterday = f"{prefix}-{(datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')}"
                 yesterday_sheet = spreadsheet.worksheet(yesterday)
                 
                 # Get yesterday's Current Balance (cell B3)
@@ -267,7 +288,15 @@ def find_trade_in_all_sheets(trade_id):
 def log_entry_to_sheets(signal):
     with sheets_lock:
         try:
-            sheet = get_or_create_daily_worksheet()
+            # ✅ Get account number from signal
+            account_number = signal.get('account_number')
+            
+            # ✅ DEBUG LINES
+            print(f"[DEBUG] log_entry_to_sheets called")
+            print(f"[DEBUG] account_number from signal: {account_number} (type: {type(account_number)})")
+            print(f"[DEBUG] Full signal: {signal}")
+            
+            sheet = get_or_create_daily_worksheet(account_number)
             if not sheet:
                 return False
             
@@ -309,7 +338,6 @@ def log_entry_to_sheets(signal):
                 '', '', '', '', '', '', '', '', '',
             ]
             
-            # ✅ FIXED: Use append_row instead of insert_row
             sheet.append_row(row, value_input_option='USER_ENTERED')
             
             all_values = sheet.get_all_values()
@@ -321,7 +349,6 @@ def log_entry_to_sheets(signal):
         except Exception as e:
             print(f"[ERROR] Failed to log Fibo entry: {e}")
             return False
-
 def calculate_duration(outcome, worksheet, row_num, date_col=2, time_col=3):
     try:
         timestamp = outcome.get('timestamp', '')
