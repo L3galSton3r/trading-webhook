@@ -2,7 +2,7 @@ import os
 import json
 import requests
 from flask import Flask, request, jsonify
-from datetime import datetime, timedelta  # ✅ Added timedelta
+from datetime import datetime, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 from threading import Thread, Lock
@@ -23,6 +23,7 @@ ENABLE_GOOGLE_LOGGING = os.environ.get('ENABLE_GOOGLE_LOGGING', 'true').lower() 
 GOOGLE_SHEET_ID = os.environ.get('GOOGLE_SHEET_ID', '')
 GOOGLE_SHEET_ID_ORB = os.environ.get('GOOGLE_SHEET_ID_ORB', '')
 TIMEZONE_OFFSET = 2
+
 # ══════════════════════════════════════════════════════════════
 # ✅ AUTO ACCOUNT DETECTION - Maps account numbers to prefixes
 # ══════════════════════════════════════════════════════════════
@@ -36,8 +37,8 @@ def get_sheet_prefix(account_number):
     prefix = ACCOUNT_MAPPING.get(account_number)
     if prefix:
         return prefix
-    # Fallback if account not mapped
     return f"ACC{account_number}"
+
 # ══════════════════════════════════════════════════════════════
 
 SYMBOL_MAP = {
@@ -151,13 +152,13 @@ def parse_dollar_value(value_str):
 # ═══════════════════════════════════════════════════════════════════
 # FIBO SHEET FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════
+
 def get_or_create_daily_worksheet(account_number=None):
     try:
         spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID)
         if not spreadsheet:
             return None
         
-        # ✅ Auto-detect prefix from account number
         if account_number:
             prefix = get_sheet_prefix(account_number)
         else:
@@ -174,15 +175,10 @@ def get_or_create_daily_worksheet(account_number=None):
             print(f"[SHEETS] Creating new Fibo sheet: {sheet_name}")
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=24)
             
-            # ═══════════════════════════════════════════════════════════════
-            # ✅ GET STARTING BALANCE FROM YESTERDAY'S SHEET (AUTO)
-            # ═══════════════════════════════════════════════════════════════
             starting_balance = 0.0
             try:
                 yesterday = f"{prefix}-{(datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')}"
                 yesterday_sheet = spreadsheet.worksheet(yesterday)
-                
-                # Get yesterday's Current Balance (cell B3)
                 yesterday_balance = yesterday_sheet.cell(3, 2).value
                 if yesterday_balance:
                     starting_balance = parse_dollar_value(yesterday_balance)
@@ -190,11 +186,6 @@ def get_or_create_daily_worksheet(account_number=None):
             except Exception as e:
                 print(f"[SHEETS] No previous sheet found, starting balance = $0.00 ({e})")
             
-            # ═══════════════════════════════════════════════════════════════
-            # ✅ ADD SUMMARY SECTION (FINAL FIXED FORMULAS)
-            # ═══════════════════════════════════════════════════════════════
-            
-            # Row 1: Title
             worksheet.update('A1:X1', [['📊 DAILY PERFORMANCE SUMMARY']], value_input_option='USER_ENTERED')
             worksheet.merge_cells('A1:X1')
             worksheet.format('A1', {
@@ -203,26 +194,22 @@ def get_or_create_daily_worksheet(account_number=None):
                 "horizontalAlignment": "CENTER"
             })
             
-            # Row 2: Starting Balance (AS NUMBER)
             worksheet.update('A2', [['Starting Balance:']], value_input_option='USER_ENTERED')
             worksheet.update('B2', [[starting_balance]], value_input_option='USER_ENTERED')
             worksheet.format('A2:B2', {"textFormat": {"bold": True}})
             worksheet.format('B2', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
             
-            # Row 3: Current Balance (FIXED FORMULA)
             worksheet.update('A3', [['Current Balance:']], value_input_option='USER_ENTERED')
             worksheet.update('B3', [['=B2+SUMPRODUCT((LEN(V9:V)>0)*VALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(V9:V,"$",""),",","")," ","")))']], value_input_option='USER_ENTERED')
             worksheet.format('A3:B3', {"textFormat": {"bold": True}})
             worksheet.format('B3', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
             
-            # Row 4: Daily P/L (Formula)
             worksheet.update('A4', [['Daily P/L:']], value_input_option='USER_ENTERED')
             worksheet.update('B4', [['=B3-B2']], value_input_option='USER_ENTERED')
             worksheet.update('C4', [['=IF(B2>0,TEXT(B4/B2*100,"0.00")&"%","0%")']], value_input_option='USER_ENTERED')
             worksheet.format('A4:C4', {"textFormat": {"bold": True}})
             worksheet.format('B4', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
             
-            # Stats - Right Side (FINAL FIXED FORMULAS)
             worksheet.update('D2', [['Total Trades:']], value_input_option='USER_ENTERED')
             worksheet.update('E2', [['=COUNTIF(O9:O,"*Closed*")']], value_input_option='USER_ENTERED')
             
@@ -235,12 +222,10 @@ def get_or_create_daily_worksheet(account_number=None):
             worksheet.update('D5', [['Win Rate:']], value_input_option='USER_ENTERED')
             worksheet.update('E5', [['=IF(E2>0,TEXT(E3/E2*100,"0.0")&"%","0%")']], value_input_option='USER_ENTERED')
             
-            # Row 6: Separator
             worksheet.update('A6:X6', [['═══════════════════════════════════════════════════════════════════════════']], value_input_option='USER_ENTERED')
             worksheet.merge_cells('A6:X6')
             worksheet.format('A6', {"horizontalAlignment": "CENTER", "textFormat": {"foregroundColor": {"red": 0.5, "green": 0.5, "blue": 0.5}}})
             
-            # Row 8: Column Headers
             headers = [
                 'Trade ID', 'Date', 'Time', 'Symbol', 'Direction', 'Zone Type',
                 'Entry Price', 'Stop Loss', 'TP1', 'TP2', 'TP3', 'TP4',
@@ -261,6 +246,7 @@ def get_or_create_daily_worksheet(account_number=None):
     except Exception as e:
         print(f"[ERROR] Failed to get/create Fibo daily worksheet: {e}")
         return None
+
 def find_trade_in_all_sheets(trade_id):
     try:
         spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID)
@@ -288,10 +274,8 @@ def find_trade_in_all_sheets(trade_id):
 def log_entry_to_sheets(signal):
     with sheets_lock:
         try:
-            # ✅ Get account number from signal
             account_number = signal.get('account_number')
             
-            # ✅ DEBUG LINES
             print(f"[DEBUG] log_entry_to_sheets called")
             print(f"[DEBUG] account_number from signal: {account_number} (type: {type(account_number)})")
             print(f"[DEBUG] Full signal: {signal}")
@@ -349,6 +333,7 @@ def log_entry_to_sheets(signal):
         except Exception as e:
             print(f"[ERROR] Failed to log Fibo entry: {e}")
             return False
+
 def calculate_duration(outcome, worksheet, row_num, date_col=2, time_col=3):
     try:
         timestamp = outcome.get('timestamp', '')
@@ -939,14 +924,14 @@ def process_orb_update_background(data):
         print(f"[Background] Error processing ORB_UPDATE: {e}")
 
 # ═══════════════════════════════════════════════════════════════════
-# WEBHOOK ENDPOINTS
+# WEBHOOK ENDPOINTS - ALL WITH force=True FIX
 # ═══════════════════════════════════════════════════════════════════
 
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "3.9 - Auto Balance Summary",
+        "version": "4.0 - TradingView Fix",
         "endpoints": {
             "fibo": "/fibo",
             "orb": "/orb",
@@ -964,7 +949,7 @@ def home():
 @app.route('/fibo', methods=['POST'])
 def fibo_webhook():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         
         if not data:
             return jsonify({"status": "error", "message": "No data received"}), 400
@@ -997,7 +982,7 @@ def fibo_webhook():
 @app.route('/orb', methods=['POST'])
 def orb_webhook():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         
         if not data:
             return jsonify({"status": "error", "message": "No data received"}), 400
@@ -1030,7 +1015,7 @@ def orb_webhook():
 @app.route('/update', methods=['POST'])
 def update_webhook():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         
         if not data:
             return jsonify({"status": "error", "message": "No data received"}), 400
@@ -1059,7 +1044,7 @@ def update_webhook():
 @app.route('/orb_update', methods=['POST'])
 def orb_update_webhook():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         
         if not data:
             return jsonify({"status": "error", "message": "No data received"}), 400
@@ -1090,7 +1075,7 @@ def orb_update_webhook():
 def health():
     return jsonify({
         "status": "running",
-        "version": "3.9 - Auto Balance Summary",
+        "version": "4.0 - TradingView Fix",
         "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
         "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "timestamp": datetime.utcnow().isoformat()
@@ -1102,7 +1087,7 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"[STARTUP] Trading Webhook v3.9 - Auto Balance Summary")
-    print(f"[STARTUP] New sheets auto-pull starting balance from yesterday")
+    print(f"[STARTUP] Trading Webhook v4.0 - TradingView Fix")
+    print(f"[STARTUP] All endpoints now accept any Content-Type")
     print(f"[STARTUP] Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
