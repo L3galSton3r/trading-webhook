@@ -23,6 +23,7 @@ ENABLE_GOOGLE_LOGGING = os.environ.get('ENABLE_GOOGLE_LOGGING', 'true').lower() 
 GOOGLE_SHEET_ID = os.environ.get('GOOGLE_SHEET_ID', '')
 GOOGLE_SHEET_ID_ORB = os.environ.get('GOOGLE_SHEET_ID_ORB', '')
 TIMEZONE_OFFSET = 2
+ACCOUNT_PREFIX = os.environ.get('ACCOUNT_PREFIX', 'FTMO')
 
 SYMBOL_MAP = {
     "EURUSD": "EURUSD",
@@ -142,7 +143,7 @@ def get_or_create_daily_worksheet():
             return None
         
         today = datetime.utcnow()
-        sheet_name = today.strftime('%Y-%m-%d')
+        sheet_name = f"{ACCOUNT_PREFIX}-{today.strftime('%Y-%m-%d')}"
         
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
@@ -157,7 +158,7 @@ def get_or_create_daily_worksheet():
             # ═══════════════════════════════════════════════════════════════
             starting_balance = 0.0
             try:
-                yesterday = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+                yesterday = f"{ACCOUNT_PREFIX}-{(datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')}"
                 yesterday_sheet = spreadsheet.worksheet(yesterday)
                 
                 # Get yesterday's Current Balance (cell B3)
