@@ -357,16 +357,22 @@ def find_trade_in_all_sheets(trade_id):
 def log_entry_to_sheets(signal):
     with sheets_lock:
         try:
+            print("[DEBUG-A] Entered log_entry_to_sheets")
             account_number = signal.get('account_number')
             
             print(f"[DEBUG] log_entry_to_sheets called")
             print(f"[DEBUG] account_number from signal: {account_number} (type: {type(account_number)})")
             print(f"[DEBUG] Full signal: {signal}")
             
+            print("[DEBUG-B] Calling get_or_create_daily_worksheet...")
             sheet = get_or_create_daily_worksheet(account_number)
+            print(f"[DEBUG-C] Sheet retrieved: {sheet}")
+            
             if not sheet:
+                print("[DEBUG-D] Sheet is None, exiting")
                 return False
             
+            print("[DEBUG-E] Processing timestamp...")
             now = datetime.utcnow()
             date_str = now.strftime('%Y-%m-%d')
             time_str = now.strftime('%H:%M:%S')
@@ -380,6 +386,7 @@ def log_entry_to_sheets(signal):
                 except:
                     pass
             
+            print("[DEBUG-F] Building row data...")
             zone_type = signal.get('zone_type', 'MINOR')
             risk_percent = 0.75 if zone_type == 'MAJOR' else 0.40
             
@@ -405,20 +412,26 @@ def log_entry_to_sheets(signal):
                 '', '', '', '', '', '', '', '', '',
             ]
             
+            print("[DEBUG-G] Appending row to Daily Sheet...")
             sheet.append_row(row, value_input_option='USER_ENTERED')
             
+            print("[DEBUG-H] Getting all values for row count...")
             all_values = sheet.get_all_values()
             actual_row = len(all_values)
             
             print(f"[SHEETS] ✅ ENTRY logged to {sheet.title} (row {actual_row}): {signal.get('trade_id')} | Entry: {entry_price} | Lots: {lot_size}")
             
+            print("[DEBUG-I] Calling log_entry_to_master...")
             # NEW: Log to Master Log
             log_entry_to_master(signal)
             
+            print("[DEBUG-J] Returning True")
             return True
         
         except Exception as e:
             print(f"[ERROR] Failed to log Fibo entry: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
 def calculate_duration(outcome, worksheet, row_num, date_col=2, time_col=3):
