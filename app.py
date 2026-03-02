@@ -23,6 +23,7 @@ ENABLE_GOOGLE_LOGGING = os.environ.get('ENABLE_GOOGLE_LOGGING', 'true').lower() 
 GOOGLE_SHEET_ID = os.environ.get('GOOGLE_SHEET_ID', '')
 GOOGLE_SHEET_ID_ORB = os.environ.get('GOOGLE_SHEET_ID_ORB', '')
 TIMEZONE_OFFSET = 2
+GOOGLE_SHEET_ID_MASTER = os.environ.get('GOOGLE_SHEET_ID_MASTER', '')  # NEW: Master Strategy Log
 
 # ══════════════════════════════════════════════════════════════
 # ✅ AUTO ACCOUNT DETECTION - Maps account numbers to prefixes
@@ -149,7 +150,69 @@ def parse_dollar_value(value_str):
     except:
         return 0
 
+#
+
 # ═══════════════════════════════════════════════════════════════════
+# MASTER STRATEGY LOG (Entry-Based Performance Tracking)
+# ═══════════════════════════════════════════════════════════════════
+
+def get_or_create_master_log():
+    try:
+        if not GOOGLE_SHEET_ID_MASTER: return None
+        spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID_MASTER)
+        if not spreadsheet: return None
+        try:
+            return spreadsheet.worksheet("Trade_Master_Log")
+        except gspread.exceptions.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title="Trade_Master_Log", rows=10000, cols=20)
+            headers = ['Trade ID', 'Symbol', 'Direction', 'Zone/Session', 'Entry Time', 'Entry Price', 'Entry Balance', 'Risk %', 'Close Time', 'Close Price', 'Gross P/L', 'Commission', 'Swap', 'Net P/L', 'R Multiple', 'Duration', 'Entry Day', 'Close Day', 'Status']
+            worksheet.update('A1:S1', [headers], value_input_option='USER_ENTERED')
+            worksheet.format('A1:S1', {"backgroundColor": {"red": 0.2, "green": 0.6, "blue": 0.8}, "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}}, "horizontalAlignment": "CENTER"})
+            return worksheet
+    except Exception as e:
+        print(f"[ERROR] Master Log Init: {e}")
+        return None
+
+def log_entry_to_master(data):
+    if not GOOGLE_SHEET_ID_MASTER: return
+    with sheets_lock:
+        try:
+            worksheet = get_or_create_master_log()
+            if not worksheet: return
+            trade_id = data.get('trade_id', '')
+            try:
+                if worksheet.find(trade_id): return
+            except: pass
+            entry_time_str = data.get('timestamp', '')
+            entry_day = datetime.strptime(entry_time_str.replace('.', '-'), '%Y-%m-%d %H:%M:%S').strftime('%A') if entry_time_str else ""
+            row = [trade_id, data.get('symbol', ''), data.get('direction', ''), data.get('zone_type') or data.get('session', ''), entry_time_str, data.get('entry') or data.get('price', ''), data.get('mt5_balance', ''), data.get('risk_percent', '0.5%'), '', '', '', '', '', '', '', '', entry_day, '', 'OPEN']
+            worksheet.append_row(row, value_input_option='USER_ENTERED')
+        except Exception as e: print(f"[ERROR] Master entry log: {e}")
+
+def update_master_on_close(data):
+    if not GOOGLE_SHEET_ID_MASTER: return
+    with sheets_lock:
+        try:
+            worksheet = get_or_create_master_log()
+            if not worksheet: return
+            trade_id = data.get('trade_id', '')
+            cell = worksheet.find(trade_id)
+            if not cell: return
+            row_num = cell.row
+            close_time_str = data.get('timestamp', '')
+            close_day = datetime.strptime(close_time_str.replace('.', '-'), '%Y-%m-%d %H:%M:%S').strftime('%A') if close_time_str else ""
+            entry_time_str = worksheet.cell(row_num, 5).value
+            duration = calculate_duration_from_times(entry_time_str, close_time_str) if entry_time_str else ""
+            net_pnl = data.get('cumulative_profit') or data.get('profit', 0)
+            worksheet.update_cell(row_num, 9, close_time_str)
+            worksheet.update_cell(row_num, 10, data.get('price', ''))
+            worksheet.update_cell(row_num, 14, net_pnl)
+            worksheet.update_cell(row_num, 16, duration)
+            worksheet.update_cell(row_num, 18, close_day)
+            worksheet.update_cell(row_num, 19, data.get('event', 'CLOSED'))
+        except Exception as e: print(f"[ERROR] Master close update: {e}")
+
+#═══════════════════════════════════════════════════════════════════
 # FIBO SHEET FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════
 
@@ -328,6 +391,10 @@ def log_entry_to_sheets(signal):
             actual_row = len(all_values)
             
             print(f"[SHEETS] ✅ ENTRY logged to {sheet.title} (row {actual_row}): {signal.get('trade_id')} | Entry: {entry_price} | Lots: {lot_size}")
+            
+            # NEW: Log to Master Log
+            log_entry_to_master(signal)
+            
             return True
         
         except Exception as e:
@@ -478,15 +545,21 @@ def update_trade_outcome(outcome):
                 worksheet.update_cell(row_num, 24, duration)
         
         print(f"[SHEETS] Updated {worksheet.title}: {outcome.get('trade_id')} | {event}")
+        
+        # NEW: Update Master Log & Sync Daily Balance on close
+        if event in ['TP4_HIT', 'SL_HIT', 'MANUAL_CLOSE', 'BE_CLOSED', 'CLOSED']:
+            update_master_on_close(outcome)
+            if 'mt5_balance' in outcome:
+                try: 
+                    worksheet.update_cell(3, 2, outcome['mt5_balance'])
+                except: 
+                    pass
+        
         return True
     
     except Exception as e:
         print(f"[ERROR] Failed to update Fibo outcome: {e}")
         return False
-
-# ═══════════════════════════════════════════════════════════════════
-# ORB SHEET FUNCTIONS
-# ═══════════════════════════════════════════════════════════════════
 
 def get_or_create_orb_daily_worksheet():
     try:
