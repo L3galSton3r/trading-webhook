@@ -187,23 +187,24 @@ def log_entry_to_master(data):
             if not worksheet:
                 print("[DEBUG] Worksheet is None, exiting")
                 return
+            
             trade_id = data.get('trade_id', '')
-            print(f"[DEBUG] Checking for duplicate: {trade_id}")
-            try:
-                if worksheet.find(trade_id):
-                    print(f"[DEBUG] Trade {trade_id} already exists, skipping")
-                    return
-            except:
-                pass
-            print("[DEBUG] Building row data...")
+            print(f"[DEBUG] Building row for: {trade_id}")
+            
+            # REMOVED THE SLOW worksheet.find() CHECK
+            
             entry_time_str = data.get('timestamp', '')
             entry_day = datetime.strptime(entry_time_str.replace('.', '-'), '%Y-%m-%d %H:%M:%S').strftime('%A') if entry_time_str else ""
             row = [trade_id, data.get('symbol', ''), data.get('direction', ''), data.get('zone_type') or data.get('session', ''), entry_time_str, data.get('entry') or data.get('price', ''), data.get('mt5_balance', ''), data.get('risk_percent', '0.5%'), '', '', '', '', '', '', '', '', entry_day, '', 'OPEN']
+            
             print(f"[DEBUG] Appending row to Master Log...")
             worksheet.append_row(row, value_input_option='USER_ENTERED')
             print(f"[SHEETS] ✅ Master Log entry added: {trade_id}")
         except Exception as e:
             print(f"[ERROR] Master entry log: {e}")
+            import traceback
+            traceback.print_exc()
+
 def update_master_on_close(data):
     if not GOOGLE_SHEET_ID_MASTER:
         return
