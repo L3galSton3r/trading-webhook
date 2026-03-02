@@ -150,17 +150,17 @@ def parse_dollar_value(value_str):
     except:
         return 0
 
-#
-
 # ═══════════════════════════════════════════════════════════════════
 # MASTER STRATEGY LOG (Entry-Based Performance Tracking)
 # ═══════════════════════════════════════════════════════════════════
 
 def get_or_create_master_log():
     try:
-        if not GOOGLE_SHEET_ID_MASTER: return None
+        if not GOOGLE_SHEET_ID_MASTER:
+            return None
         spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID_MASTER)
-        if not spreadsheet: return None
+        if not spreadsheet:
+            return None
         try:
             return spreadsheet.worksheet("Trade_Master_Log")
         except gspread.exceptions.WorksheetNotFound:
@@ -174,30 +174,39 @@ def get_or_create_master_log():
         return None
 
 def log_entry_to_master(data):
-    if not GOOGLE_SHEET_ID_MASTER: return
+    if not GOOGLE_SHEET_ID_MASTER:
+        return
     with sheets_lock:
         try:
             worksheet = get_or_create_master_log()
-            if not worksheet: return
+            if not worksheet:
+                return
             trade_id = data.get('trade_id', '')
             try:
-                if worksheet.find(trade_id): return
-            except: pass
+                if worksheet.find(trade_id):
+                    return
+            except:
+                pass
             entry_time_str = data.get('timestamp', '')
             entry_day = datetime.strptime(entry_time_str.replace('.', '-'), '%Y-%m-%d %H:%M:%S').strftime('%A') if entry_time_str else ""
             row = [trade_id, data.get('symbol', ''), data.get('direction', ''), data.get('zone_type') or data.get('session', ''), entry_time_str, data.get('entry') or data.get('price', ''), data.get('mt5_balance', ''), data.get('risk_percent', '0.5%'), '', '', '', '', '', '', '', '', entry_day, '', 'OPEN']
             worksheet.append_row(row, value_input_option='USER_ENTERED')
-        except Exception as e: print(f"[ERROR] Master entry log: {e}")
+            print(f"[SHEETS] ✅ Master Log entry added: {trade_id}")
+        except Exception as e:
+            print(f"[ERROR] Master entry log: {e}")
 
 def update_master_on_close(data):
-    if not GOOGLE_SHEET_ID_MASTER: return
+    if not GOOGLE_SHEET_ID_MASTER:
+        return
     with sheets_lock:
         try:
             worksheet = get_or_create_master_log()
-            if not worksheet: return
+            if not worksheet:
+                return
             trade_id = data.get('trade_id', '')
             cell = worksheet.find(trade_id)
-            if not cell: return
+            if not cell:
+                return
             row_num = cell.row
             close_time_str = data.get('timestamp', '')
             close_day = datetime.strptime(close_time_str.replace('.', '-'), '%Y-%m-%d %H:%M:%S').strftime('%A') if close_time_str else ""
@@ -210,9 +219,11 @@ def update_master_on_close(data):
             worksheet.update_cell(row_num, 16, duration)
             worksheet.update_cell(row_num, 18, close_day)
             worksheet.update_cell(row_num, 19, data.get('event', 'CLOSED'))
-        except Exception as e: print(f"[ERROR] Master close update: {e}")
+            print(f"[SHEETS] ✅ Master Log updated on close: {trade_id}")
+        except Exception as e:
+            print(f"[ERROR] Master close update: {e}")
 
-#═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 # FIBO SHEET FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════
 
@@ -550,9 +561,9 @@ def update_trade_outcome(outcome):
         if event in ['TP4_HIT', 'SL_HIT', 'MANUAL_CLOSE', 'BE_CLOSED', 'CLOSED']:
             update_master_on_close(outcome)
             if 'mt5_balance' in outcome:
-                try: 
+                try:
                     worksheet.update_cell(3, 2, outcome['mt5_balance'])
-                except: 
+                except:
                     pass
         
         return True
@@ -560,6 +571,10 @@ def update_trade_outcome(outcome):
     except Exception as e:
         print(f"[ERROR] Failed to update Fibo outcome: {e}")
         return False
+
+# ═══════════════════════════════════════════════════════════════════
+# ORB SHEET FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════
 
 def get_or_create_orb_daily_worksheet():
     try:
