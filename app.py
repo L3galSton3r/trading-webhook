@@ -179,31 +179,30 @@ def log_entry_to_master(data):
         print("[DEBUG] Master Log ID not set, exiting")
         return
     print("[DEBUG] Master Log ID found, proceeding...")
-    with sheets_lock:
-        try:
-            print("[DEBUG] Acquiring sheets lock...")
-            worksheet = get_or_create_master_log()
-            print(f"[DEBUG] Worksheet retrieved: {worksheet}")
-            if not worksheet:
-                print("[DEBUG] Worksheet is None, exiting")
-                return
-            
-            trade_id = data.get('trade_id', '')
-            print(f"[DEBUG] Building row for: {trade_id}")
-            
-            # REMOVED THE SLOW worksheet.find() CHECK
-            
-            entry_time_str = data.get('timestamp', '')
-            entry_day = datetime.strptime(entry_time_str.replace('.', '-'), '%Y-%m-%d %H:%M:%S').strftime('%A') if entry_time_str else ""
-            row = [trade_id, data.get('symbol', ''), data.get('direction', ''), data.get('zone_type') or data.get('session', ''), entry_time_str, data.get('entry') or data.get('price', ''), data.get('mt5_balance', ''), data.get('risk_percent', '0.5%'), '', '', '', '', '', '', '', '', entry_day, '', 'OPEN']
-            
-            print(f"[DEBUG] Appending row to Master Log...")
-            worksheet.append_row(row, value_input_option='USER_ENTERED')
-            print(f"[SHEETS] ✅ Master Log entry added: {trade_id}")
-        except Exception as e:
-            print(f"[ERROR] Master entry log: {e}")
-            import traceback
-            traceback.print_exc()
+    
+    # REMOVED: with sheets_lock:
+    try:
+        print("[DEBUG] Getting master log worksheet...")
+        worksheet = get_or_create_master_log()
+        print(f"[DEBUG] Worksheet retrieved: {worksheet}")
+        if not worksheet:
+            print("[DEBUG] Worksheet is None, exiting")
+            return
+        
+        trade_id = data.get('trade_id', '')
+        print(f"[DEBUG] Building row for: {trade_id}")
+        
+        entry_time_str = data.get('timestamp', '')
+        entry_day = datetime.strptime(entry_time_str.replace('.', '-'), '%Y-%m-%d %H:%M:%S').strftime('%A') if entry_time_str else ""
+        row = [trade_id, data.get('symbol', ''), data.get('direction', ''), data.get('zone_type') or data.get('session', ''), entry_time_str, data.get('entry') or data.get('price', ''), data.get('mt5_balance', ''), data.get('risk_percent', '0.5%'), '', '', '', '', '', '', '', '', entry_day, '', 'OPEN']
+        
+        print(f"[DEBUG] Appending row to Master Log...")
+        worksheet.append_row(row, value_input_option='USER_ENTERED')
+        print(f"[SHEETS] ✅ Master Log entry added: {trade_id}")
+    except Exception as e:
+        print(f"[ERROR] Master entry log: {e}")
+        import traceback
+        traceback.print_exc()
 
 def update_master_on_close(data):
     if not GOOGLE_SHEET_ID_MASTER:
