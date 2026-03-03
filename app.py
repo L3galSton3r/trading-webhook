@@ -136,7 +136,20 @@ def log_entry_to_master(data):
         trade_id = data.get('trade_id', '')
         entry_time_str = data.get('timestamp', '')
         entry_day = datetime.strptime(entry_time_str.replace('.', '-'), '%Y-%m-%d %H:%M:%S').strftime('%A') if entry_time_str else ""
-        row = [trade_id, data.get('symbol', ''), data.get('direction', ''), data.get('zone_type') or data.get('session', ''), entry_time_str, data.get('entry') or data.get('price', ''), data.get('mt5_balance', ''), data.get('risk_percent', '0.5%'), '', '', '', '', '', '', '', '', entry_day, '', 'OPEN']
+        
+        # Use risk_percent from EA if provided
+        zone_type = data.get('zone_type', 'MINOR')
+        if 'risk_percent' in data:
+            risk_pct = data['risk_percent']
+            if isinstance(risk_pct, (int, float)):
+                risk_display = f"{risk_pct}%"
+            else:
+                risk_display = str(risk_pct)
+        else:
+            risk_pct = 0.75 if zone_type == 'MAJOR' else 0.40
+            risk_display = f"{risk_pct}%"
+        
+        row = [trade_id, data.get('symbol', ''), data.get('direction', ''), data.get('zone_type') or data.get('session', ''), entry_time_str, data.get('entry') or data.get('price', ''), data.get('mt5_balance', ''), risk_display, '', '', '', '', '', '', '', '', entry_day, '', 'OPEN']
         worksheet.append_row(row, value_input_option='USER_ENTERED')
         print(f"[SHEETS] ✅ Master Log entry added: {trade_id}")
     except Exception as e:
@@ -275,11 +288,37 @@ def log_entry_to_sheets(signal):
                         time_str = ts.split(' ')[1]
                 except:
                     pass
+            
             zone_type = signal.get('zone_type', 'MINOR')
-            risk_percent = 0.75 if zone_type == 'MAJOR' else 0.40
+            
+            # Use risk_percent from EA if provided, otherwise calculate from zone_type
+            if 'risk_percent' in signal:
+                risk_percent = signal['risk_percent']
+            else:
+                risk_percent = 0.75 if zone_type == 'MAJOR' else 0.40
+            
             entry_price = signal.get('entry', signal.get('price', ''))
             lot_size = signal.get('lot_size', '')
-            row = [signal.get('trade_id', ''), date_str, time_str, signal.get('symbol', ''), signal.get('direction', ''), zone_type, entry_price, signal.get('stop_loss', ''), signal.get('tp1', ''), signal.get('tp2', ''), signal.get('tp3', ''), signal.get('tp4', ''), lot_size, f"{risk_percent}%", 'Active', '', '', '', '', '', '', '', '', '']
+            
+            row = [
+                signal.get('trade_id', ''),
+                date_str,
+                time_str,
+                signal.get('symbol', ''),
+                signal.get('direction', ''),
+                zone_type,
+                entry_price,
+                signal.get('stop_loss', ''),
+                signal.get('tp1', ''),
+                signal.get('tp2', ''),
+                signal.get('tp3', ''),
+                signal.get('tp4', ''),
+                lot_size,
+                f"{risk_percent}%",
+                'Active',
+                '', '', '', '', '', '', '', '', ''
+            ]
+            
             sheet.append_row(row, value_input_option='USER_ENTERED')
             all_values = sheet.get_all_values()
             actual_row = len(all_values)
@@ -757,7 +796,7 @@ def process_orb_update_background(data):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "4.2 - Full with Master Log",
+        "version": "4.3 - Fixed Risk Percent",
         "endpoints": {"fibo": "/fibo", "orb": "/orb", "update": "/update", "orb_update": "/orb_update", "health": "/health"},
         "forwards_to": TAILSCALE_URL,
         "google_logging": ENABLE_GOOGLE_LOGGING,
@@ -852,7 +891,7 @@ def orb_update_webhook():
 def health():
     return jsonify({
         "status": "running",
-        "version": "4.2 - Full with Master Log",
+        "version": "4.3 - Fixed Risk Percent",
         "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
         "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "google_sheets_master": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_MASTER),
@@ -861,7 +900,7 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"[STARTUP] Trading Webhook v4.2 - Full with Master Log")
+    print(f"[STARTUP] Trading Webhook v4.3 - Fixed Risk Percent")
     print(f"[STARTUP] All endpoints now accept any Content-Type")
     print(f"[STARTUP] Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
