@@ -188,7 +188,7 @@ def update_master_on_close(data):
 def get_or_create_daily_worksheet_for_date(account_number, target_date):
     """
     Get or create a daily performance sheet for a SPECIFIC date.
-    Used when logging closes/partials to the correct day.
+    Uses BATCH updates to avoid Google Sheets API rate limits.
     """
     try:
         spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID)
@@ -208,9 +208,8 @@ def get_or_create_daily_worksheet_for_date(account_number, target_date):
             return worksheet
         except gspread.exceptions.WorksheetNotFound:
             print(f"[SHEETS] Creating new daily sheet: {sheet_name}")
-            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
             
-            # Calculate starting balance from previous day's ENDING balance
+            # Calculate starting balance from previous day
             starting_balance = 0.0
             try:
                 prev_date = target_date - timedelta(days=1)
@@ -223,51 +222,112 @@ def get_or_create_daily_worksheet_for_date(account_number, target_date):
             except Exception as e:
                 print(f"[SHEETS] No previous day sheet found, starting at $0.00")
             
-            # Header
-            worksheet.update('A1:T1', [['📊 DAILY PERFORMANCE - REALIZED P/L ONLY']], value_input_option='USER_ENTERED')
+            # Create worksheet
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
+            
+            # ═══════════════════════════════════════════════════════════
+            # ✅ FIX: Use BATCH update instead of individual writes
+            # ═══════════════════════════════════════════════════════════
+            
+            # Prepare all data updates
+            updates = []
+            
+            # Header (A1:T1)
+            updates.append({
+                'range': 'A1:T1',
+                'values': [['📊 DAILY PERFORMANCE - REALIZED P/L ONLY']]
+            })
+            
+            # Balance section (A2:C5)
+            updates.append({
+                'range': 'A2:C5',
+                'values': [
+                    ['Starting Balance:', starting_balance, ''],
+                    ['Ending Balance:', '=B2+SUM(M9:M)', ''],
+                    ['Daily P/L:', '=B3-B2', '=IF(B2>0,TEXT(B4/B2*100,"0.00")&"%","0%")'],
+                    ['', '', '']
+                ]
+            })
+            
+            # Stats section (D2:E5)
+            updates.append({
+                'range': 'D2:E5',
+                'values': [
+                    ['Closed Trades:', '=COUNTA(A9:A)'],
+                    ['Wins:', '=COUNTIF(M9:M,">0")'],
+                    ['Losses:', '=COUNTIF(M9:M,"<0")'],
+                    ['Win Rate:', '=IF(E2>0,TEXT(E3/E2*100,"0.0")&"%","0%")']
+                ]
+            })
+            
+            # Separator (A6:T6)
+            updates.append({
+                'range': 'A6:T6',
+                'values': [['═══════════════════════════════════════════════════════════════════════════']]
+            })
+            
+            # Column headers (A8:N8)
+            updates.append({
+                'range': 'A8:N8',
+                'values': [['Trade ID', 'Symbol', 'Direction', 'Zone', 'Entry Time', 'Entry Price', 
+                           'Close Time', 'Close Price', 'Event Type', 'Lot Size', 'Risk %', 
+                           'Duration', 'Realized P/L', 'Balance After']]
+            })
+            
+            # Apply all data updates in ONE batch
+            worksheet.batch_update(updates, value_input_option='USER_ENTERED')
+            
+            # Apply formatting in ONE batch
+            worksheet.batch_format([
+                # Header merge and format
+                {
+                    'range': 'A1:T1',
+                    'format': {
+                        'backgroundColor': {'red': 0.2, 'green': 0.4, 'blue': 0.8},
+                        'textFormat': {'bold': True, 'fontSize': 14, 'foregroundColor': {'red': 1, 'green': 1, 'blue': 1}},
+                        'horizontalAlignment': 'CENTER'
+                    }
+                },
+                # Balance labels bold
+                {
+                    'range': 'A2:A4',
+                    'format': {'textFormat': {'bold': True}}
+                },
+                # Balance values currency format
+                {
+                    'range': 'B2:B4',
+                    'format': {
+                        'textFormat': {'bold': True},
+                        'numberFormat': {'type': 'CURRENCY', 'pattern': '$#,##0.00'}
+                    }
+                },
+                # Stats labels bold
+                {
+                    'range': 'D2:D5',
+                    'format': {'textFormat': {'bold': True}}
+                },
+                # Column headers
+                {
+                    'range': 'A8:N8',
+                    'format': {
+                        'backgroundColor': {'red': 0.2, 'green': 0.4, 'blue': 0.8},
+                        'textFormat': {'bold': True, 'foregroundColor': {'red': 1, 'green': 1, 'blue': 1}},
+                        'horizontalAlignment': 'CENTER'
+                    }
+                }
+            ])
+            
+            # Merge cells (separate request, but only one)
             worksheet.merge_cells('A1:T1')
-            worksheet.format('A1', {"backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.8}, "textFormat": {"bold": True, "fontSize": 14, "foregroundColor": {"red": 1, "green": 1, "blue": 1}}, "horizontalAlignment": "CENTER"})
-            
-            # Balance section
-            worksheet.update('A2', [['Starting Balance:']], value_input_option='USER_ENTERED')
-            worksheet.update('B2', [[starting_balance]], value_input_option='USER_ENTERED')
-            worksheet.format('A2:B2', {"textFormat": {"bold": True}})
-            worksheet.format('B2', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
-            
-            worksheet.update('A3', [['Ending Balance:']], value_input_option='USER_ENTERED')
-            worksheet.update('B3', [['=B2+SUM(M9:M)']], value_input_option='USER_ENTERED')
-            worksheet.format('A3:B3', {"textFormat": {"bold": True}})
-            worksheet.format('B3', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
-            
-            worksheet.update('A4', [['Daily P/L:']], value_input_option='USER_ENTERED')
-            worksheet.update('B4', [['=B3-B2']], value_input_option='USER_ENTERED')
-            worksheet.update('C4', [['=IF(B2>0,TEXT(B4/B2*100,"0.00")&"%","0%")']], value_input_option='USER_ENTERED')
-            worksheet.format('A4:C4', {"textFormat": {"bold": True}})
-            worksheet.format('B4', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
-            
-            # Stats
-            worksheet.update('D2', [['Closed Trades:']], value_input_option='USER_ENTERED')
-            worksheet.update('E2', [['=COUNTA(A9:A)']], value_input_option='USER_ENTERED')
-            worksheet.update('D3', [['Wins:']], value_input_option='USER_ENTERED')
-            worksheet.update('E3', [['=COUNTIF(M9:M,">0")']], value_input_option='USER_ENTERED')
-            worksheet.update('D4', [['Losses:']], value_input_option='USER_ENTERED')
-            worksheet.update('E4', [['=COUNTIF(M9:M,"<0")']], value_input_option='USER_ENTERED')
-            worksheet.update('D5', [['Win Rate:']], value_input_option='USER_ENTERED')
-            worksheet.update('E5', [['=IF(E2>0,TEXT(E3/E2*100,"0.0")&"%","0%")']], value_input_option='USER_ENTERED')
-            
-            worksheet.update('A6:T6', [['═══════════════════════════════════════════════════════════════════════════']], value_input_option='USER_ENTERED')
             worksheet.merge_cells('A6:T6')
-            
-            # Column headers
-            headers = ['Trade ID', 'Symbol', 'Direction', 'Zone', 'Entry Time', 'Entry Price', 'Close Time', 'Close Price', 'Event Type', 'Lot Size', 'Risk %', 'Duration', 'Realized P/L', 'Balance After']
-            worksheet.update('A8:N8', [headers], value_input_option='USER_ENTERED')
-            worksheet.format('A8:N8', {"backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.8}, "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}}, "horizontalAlignment": "CENTER"})
             
             print(f"[SHEETS] ✅ Daily sheet created: {sheet_name} | Starting: ${starting_balance:.2f}")
             return worksheet
             
     except Exception as e:
         print(f"[ERROR] Failed to create daily sheet: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def log_entry_to_sheets(signal):
