@@ -104,7 +104,7 @@ def parse_dollar_value(value_str):
         return 0
 
 # ═══════════════════════════════════════════════════════════════════
-# MASTER STRATEGY LOG
+# MASTER STRATEGY LOG (UNCHANGED - ALREADY CORRECT)
 # ═══════════════════════════════════════════════════════════════════
 
 def get_or_create_master_log():
@@ -137,7 +137,6 @@ def log_entry_to_master(data):
         entry_time_str = data.get('timestamp', '')
         entry_day = datetime.strptime(entry_time_str.replace('.', '-'), '%Y-%m-%d %H:%M:%S').strftime('%A') if entry_time_str else ""
         
-        # Use risk_percent from EA if provided
         zone_type = data.get('zone_type', 'MINOR')
         if 'risk_percent' in data:
             risk_pct = data['risk_percent']
@@ -183,288 +182,256 @@ def update_master_on_close(data):
         print(f"[ERROR] Master close update: {e}")
 
 # ═══════════════════════════════════════════════════════════════════
-# FIBO SHEET FUNCTIONS
+# DAILY PERFORMANCE SHEETS (COMPLETELY REWRITTEN - LOGS BY CLOSE DATE)
 # ═══════════════════════════════════════════════════════════════════
 
-def get_or_create_daily_worksheet(account_number=None):
+def get_or_create_daily_worksheet_for_date(account_number, target_date):
+    """
+    Get or create a daily performance sheet for a SPECIFIC date.
+    Used when logging closes/partials to the correct day.
+    """
     try:
         spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID)
         if not spreadsheet:
             return None
+        
         if account_number:
             prefix = get_sheet_prefix(account_number)
         else:
             prefix = "UNKNOWN"
-        today = datetime.utcnow()
-        sheet_name = f"{prefix}-{today.strftime('%Y-%m-%d')}"
+        
+        sheet_name = f"{prefix}-{target_date.strftime('%Y-%m-%d')}"
+        
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
-            print(f"[SHEETS] Using existing Fibo sheet: {sheet_name}")
+            print(f"[SHEETS] Using existing daily sheet: {sheet_name}")
             return worksheet
         except gspread.exceptions.WorksheetNotFound:
-            print(f"[SHEETS] Creating new Fibo sheet: {sheet_name}")
-            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=24)
+            print(f"[SHEETS] Creating new daily sheet: {sheet_name}")
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
+            
+            # Calculate starting balance from previous day's ENDING balance
             starting_balance = 0.0
             try:
-                yesterday = f"{prefix}-{(datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')}"
-                yesterday_sheet = spreadsheet.worksheet(yesterday)
-                yesterday_balance = yesterday_sheet.cell(3, 2).value
-                if yesterday_balance:
-                    starting_balance = parse_dollar_value(yesterday_balance)
-                    print(f"[SHEETS] ✅ Pulled starting balance from {yesterday}: ${starting_balance:.2f}")
+                prev_date = target_date - timedelta(days=1)
+                prev_sheet_name = f"{prefix}-{prev_date.strftime('%Y-%m-%d')}"
+                prev_sheet = spreadsheet.worksheet(prev_sheet_name)
+                prev_ending_balance = prev_sheet.cell(3, 2).value
+                if prev_ending_balance:
+                    starting_balance = parse_dollar_value(prev_ending_balance)
+                    print(f"[SHEETS] ✅ Starting balance from {prev_sheet_name}: ${starting_balance:.2f}")
             except Exception as e:
-                print(f"[SHEETS] No previous sheet found, starting balance = $0.00 ({e})")
-            worksheet.update('A1:X1', [['📊 DAILY PERFORMANCE SUMMARY']], value_input_option='USER_ENTERED')
-            worksheet.merge_cells('A1:X1')
+                print(f"[SHEETS] No previous day sheet found, starting at $0.00")
+            
+            # Header
+            worksheet.update('A1:T1', [['📊 DAILY PERFORMANCE - REALIZED P/L ONLY']], value_input_option='USER_ENTERED')
+            worksheet.merge_cells('A1:T1')
             worksheet.format('A1', {"backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.8}, "textFormat": {"bold": True, "fontSize": 14, "foregroundColor": {"red": 1, "green": 1, "blue": 1}}, "horizontalAlignment": "CENTER"})
+            
+            # Balance section
             worksheet.update('A2', [['Starting Balance:']], value_input_option='USER_ENTERED')
             worksheet.update('B2', [[starting_balance]], value_input_option='USER_ENTERED')
             worksheet.format('A2:B2', {"textFormat": {"bold": True}})
             worksheet.format('B2', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
-            worksheet.update('A3', [['Current Balance:']], value_input_option='USER_ENTERED')
-            worksheet.update('B3', [['=B2+SUMPRODUCT((LEN(V9:V)>0)*VALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(V9:V,"$",""),",","")," ","")))']], value_input_option='USER_ENTERED')
+            
+            worksheet.update('A3', [['Ending Balance:']], value_input_option='USER_ENTERED')
+            worksheet.update('B3', [['=B2+SUM(M9:M)']], value_input_option='USER_ENTERED')
             worksheet.format('A3:B3', {"textFormat": {"bold": True}})
             worksheet.format('B3', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
+            
             worksheet.update('A4', [['Daily P/L:']], value_input_option='USER_ENTERED')
             worksheet.update('B4', [['=B3-B2']], value_input_option='USER_ENTERED')
             worksheet.update('C4', [['=IF(B2>0,TEXT(B4/B2*100,"0.00")&"%","0%")']], value_input_option='USER_ENTERED')
             worksheet.format('A4:C4', {"textFormat": {"bold": True}})
             worksheet.format('B4', {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
-            worksheet.update('D2', [['Total Trades:']], value_input_option='USER_ENTERED')
-            worksheet.update('E2', [['=COUNTIF(O9:O,"*Closed*")']], value_input_option='USER_ENTERED')
+            
+            # Stats
+            worksheet.update('D2', [['Closed Trades:']], value_input_option='USER_ENTERED')
+            worksheet.update('E2', [['=COUNTA(A9:A)']], value_input_option='USER_ENTERED')
             worksheet.update('D3', [['Wins:']], value_input_option='USER_ENTERED')
-            worksheet.update('E3', [['=COUNTIF(U9:U,"Win")+COUNTIF(U9:U,"Closed at BE*")']], value_input_option='USER_ENTERED')
+            worksheet.update('E3', [['=COUNTIF(M9:M,">0")']], value_input_option='USER_ENTERED')
             worksheet.update('D4', [['Losses:']], value_input_option='USER_ENTERED')
-            worksheet.update('E4', [['=COUNTIF(U9:U,"Loss")']], value_input_option='USER_ENTERED')
+            worksheet.update('E4', [['=COUNTIF(M9:M,"<0")']], value_input_option='USER_ENTERED')
             worksheet.update('D5', [['Win Rate:']], value_input_option='USER_ENTERED')
             worksheet.update('E5', [['=IF(E2>0,TEXT(E3/E2*100,"0.0")&"%","0%")']], value_input_option='USER_ENTERED')
-            worksheet.update('A6:X6', [['═══════════════════════════════════════════════════════════════════════════']], value_input_option='USER_ENTERED')
-            worksheet.merge_cells('A6:X6')
-            worksheet.format('A6', {"horizontalAlignment": "CENTER", "textFormat": {"foregroundColor": {"red": 0.5, "green": 0.5, "blue": 0.5}}})
-            headers = ['Trade ID', 'Date', 'Time', 'Symbol', 'Direction', 'Zone Type', 'Entry Price', 'Stop Loss', 'TP1', 'TP2', 'TP3', 'TP4', 'Lot Size', 'Risk %', 'Status', 'TP1 Hit', 'TP2 Hit', 'TP3 Hit', 'TP4 Hit', 'BE Moved', 'Final Outcome', 'Profit/Loss', 'Exit Time', 'Duration']
-            worksheet.update('A8:X8', [headers], value_input_option='USER_ENTERED')
-            worksheet.format('A8:X8', {"backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.8}, "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}}, "horizontalAlignment": "CENTER"})
-            print(f"[SHEETS] ✅ New sheet created with auto starting balance: ${starting_balance:.2f}")
+            
+            worksheet.update('A6:T6', [['═══════════════════════════════════════════════════════════════════════════']], value_input_option='USER_ENTERED')
+            worksheet.merge_cells('A6:T6')
+            
+            # Column headers
+            headers = ['Trade ID', 'Symbol', 'Direction', 'Zone', 'Entry Time', 'Entry Price', 'Close Time', 'Close Price', 'Event Type', 'Lot Size', 'Risk %', 'Duration', 'Realized P/L', 'Balance After']
+            worksheet.update('A8:N8', [headers], value_input_option='USER_ENTERED')
+            worksheet.format('A8:N8', {"backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.8}, "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}}, "horizontalAlignment": "CENTER"})
+            
+            print(f"[SHEETS] ✅ Daily sheet created: {sheet_name} | Starting: ${starting_balance:.2f}")
             return worksheet
+            
     except Exception as e:
-        print(f"[ERROR] Failed to get/create Fibo daily worksheet: {e}")
+        print(f"[ERROR] Failed to create daily sheet: {e}")
         return None
 
-def find_trade_in_all_sheets(trade_id):
-    try:
-        spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID)
-        if not spreadsheet:
-            return None, None
-        worksheets = spreadsheet.worksheets()
-        for worksheet in worksheets:
-            try:
-                cell = worksheet.find(trade_id)
-                if cell:
-                    print(f"[SHEETS] Found Fibo trade in sheet: {worksheet.title}")
-                    return worksheet, cell.row
-            except:
-                continue
-        print(f"[WARNING] Fibo trade ID not found in any sheet: {trade_id}")
-        return None, None
-    except Exception as e:
-        print(f"[ERROR] Failed to search for Fibo trade: {e}")
-        return None, None
-
 def log_entry_to_sheets(signal):
+    """
+    ENTRY events are logged to MASTER ONLY.
+    Daily sheets only get rows when trades CLOSE.
+    """
     with sheets_lock:
         try:
-            account_number = signal.get('account_number')
-            sheet = get_or_create_daily_worksheet(account_number)
+            # Log to master
+            log_entry_to_master(signal)
+            
+            # ✅ NEW BEHAVIOR: Do NOT create row in daily sheet on entry
+            print(f"[SHEETS] ℹ️ Entry logged to Master only (daily sheet will log on close): {signal.get('trade_id')}")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to log entry: {e}")
+            return False
+
+def log_close_to_daily_sheet(outcome):
+    """
+    NEW FUNCTION: Log a close/partial close to the CLOSE DATE's daily sheet.
+    """
+    with sheets_lock:
+        try:
+            trade_id = outcome.get('trade_id', '')
+            event = outcome.get('event', '')
+            timestamp = outcome.get('timestamp', '')
+            
+            # Parse close date from timestamp
+            try:
+                close_dt = datetime.strptime(timestamp.replace('.', '-'), '%Y-%m-%d %H:%M:%S')
+            except:
+                close_dt = datetime.utcnow()
+            
+            account_number = outcome.get('account_number')
+            sheet = get_or_create_daily_worksheet_for_date(account_number, close_dt)
+            
             if not sheet:
                 return False
-            now = datetime.utcnow()
-            date_str = now.strftime('%Y-%m-%d')
-            time_str = now.strftime('%H:%M:%S')
-            if 'timestamp' in signal:
-                try:
-                    ts = signal['timestamp']
-                    if ' ' in ts:
-                        date_str = ts.split(' ')[0]
-                        time_str = ts.split(' ')[1]
-                except:
-                    pass
             
-            zone_type = signal.get('zone_type', 'MINOR')
+            # Extract data
+            symbol = outcome.get('symbol', '')
+            direction = outcome.get('direction', '')
+            zone_type = outcome.get('zone_type', '')
+            entry_time = outcome.get('entry_time', '')
+            entry_price = outcome.get('entry_price', 0)
+            close_price = outcome.get('price', 0)
+            close_time = timestamp
+            lot_size = outcome.get('lot_size', '')
             
-            # Use risk_percent from EA if provided, otherwise calculate from zone_type
-            if 'risk_percent' in signal:
-                risk_percent = signal['risk_percent']
+            # Determine event type
+            if event == 'TP1_HIT':
+                event_type = 'Partial TP1'
+            elif event == 'TP2_HIT':
+                event_type = 'Partial TP2'
+            elif event == 'TP3_HIT':
+                event_type = 'Partial TP3'
+            elif event == 'TP4_HIT':
+                event_type = 'Final TP4'
+            elif event == 'SL_HIT':
+                event_type = 'Stop Loss'
+            elif event == 'BE_CLOSED':
+                event_type = 'BE Close'
+            elif event in ['MANUAL_CLOSE', 'CLOSED']:
+                event_type = 'Manual Close'
             else:
-                risk_percent = 0.75 if zone_type == 'MAJOR' else 0.40
+                event_type = event
             
-            entry_price = signal.get('entry', signal.get('price', ''))
-            lot_size = signal.get('lot_size', '')
+            # Get realized P/L
+            realized_pnl = outcome.get('profit', 0)
             
+            # Get risk %
+            if 'risk_percent' in outcome:
+                risk_pct = outcome['risk_percent']
+            else:
+                risk_pct = 0.75 if zone_type == 'MAJOR' else 0.40
+            risk_display = f"{risk_pct}%"
+            
+            # Calculate duration
+            duration = ""
+            if entry_time and close_time:
+                duration = calculate_duration_from_times(entry_time, close_time)
+            
+            # Calculate balance after (cumulative from starting balance + all P/L so far)
+            all_values = sheet.get_all_values()
+            current_balance = parse_dollar_value(sheet.cell(2, 2).value)  # Starting balance
+            
+            # Sum all existing P/L in this sheet
+            for row_idx in range(8, len(all_values)):  # Start from row 9 (data rows)
+                pnl_cell = sheet.cell(row_idx + 1, 13).value
+                if pnl_cell:
+                    current_balance += parse_dollar_value(pnl_cell)
+            
+            # Add this trade's P/L
+            balance_after = current_balance + realized_pnl
+            
+            # Build row
             row = [
-                signal.get('trade_id', ''),
-                date_str,
-                time_str,
-                signal.get('symbol', ''),
-                signal.get('direction', ''),
+                trade_id,
+                symbol,
+                direction,
                 zone_type,
+                entry_time,
                 entry_price,
-                signal.get('stop_loss', ''),
-                signal.get('tp1', ''),
-                signal.get('tp2', ''),
-                signal.get('tp3', ''),
-                signal.get('tp4', ''),
+                close_time,
+                close_price,
+                event_type,
                 lot_size,
-                f"{risk_percent}%",
-                'Active',
-                '', '', '', '', '', '', '', '', ''
+                risk_display,
+                duration,
+                f"${realized_pnl:.2f}",
+                f"${balance_after:.2f}"
             ]
             
             sheet.append_row(row, value_input_option='USER_ENTERED')
-            all_values = sheet.get_all_values()
-            actual_row = len(all_values)
-            print(f"[SHEETS] ✅ ENTRY logged to {sheet.title} (row {actual_row}): {signal.get('trade_id')} | Entry: {entry_price} | Lots: {lot_size}")
-            log_entry_to_master(signal)
+            
+            print(f"[SHEETS] ✅ Close logged to {sheet.title}: {trade_id} | {event_type} | P/L: ${realized_pnl:.2f}")
             return True
+            
         except Exception as e:
-            print(f"[ERROR] Failed to log Fibo entry: {e}")
+            print(f"[ERROR] Failed to log close to daily sheet: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-
-def calculate_duration(outcome, worksheet, row_num, date_col=2, time_col=3):
-    try:
-        timestamp = outcome.get('timestamp', '')
-        if 'entry_time' in outcome:
-            entry_time_str = outcome['entry_time']
-        else:
-            entry_date = worksheet.cell(row_num, date_col).value
-            entry_time = worksheet.cell(row_num, time_col).value
-            if entry_date and entry_time:
-                entry_time_str = f"{entry_date} {entry_time}"
-            else:
-                return None
-        return calculate_duration_from_times(entry_time_str, timestamp)
-    except Exception as e:
-        print(f"[WARNING] Could not calculate duration: {e}")
-        return None
 
 def update_trade_outcome(outcome):
+    """
+    REWRITTEN: On close events, log to daily sheet by CLOSE DATE.
+    """
     try:
-        worksheet, row_num = find_trade_in_all_sheets(outcome.get('trade_id', ''))
-        if not worksheet or not row_num:
-            print(f"[WARNING] Fibo trade ID not found: {outcome.get('trade_id')}")
-            return False
         event = outcome.get('event', '')
-        price = outcome.get('price', 0)
-        profit = outcome.get('profit', 0)
-        cumulative_profit = outcome.get('cumulative_profit', profit)
-        timestamp = outcome.get('timestamp', '')
-        if 'lot_size' in outcome:
-            worksheet.update_cell(row_num, 13, outcome['lot_size'])
-        if 'new_sl' in outcome:
-            worksheet.update_cell(row_num, 8, outcome['new_sl'])
-        elif 'stop_loss' in outcome:
-            worksheet.update_cell(row_num, 8, outcome['stop_loss'])
-        elif 'sl' in outcome:
-            worksheet.update_cell(row_num, 8, outcome['sl'])
-        if event == 'ENTRY':
-            worksheet.update_cell(row_num, 7, price)
-            worksheet.update_cell(row_num, 15, 'Active')
-        elif event == 'TP1_HIT':
-            worksheet.update_cell(row_num, 15, 'TP1 Hit - Partial')
-            worksheet.update_cell(row_num, 16, f"{timestamp} @ {price}")
-            if cumulative_profit != 0:
-                worksheet.update_cell(row_num, 22, f"${cumulative_profit:.2f}")
-        elif event == 'TP2_HIT':
-            worksheet.update_cell(row_num, 15, 'TP2 Hit - Partial')
-            worksheet.update_cell(row_num, 17, f"{timestamp} @ {price}")
-            if cumulative_profit != 0:
-                worksheet.update_cell(row_num, 22, f"${cumulative_profit:.2f}")
-        elif event == 'TP3_HIT':
-            worksheet.update_cell(row_num, 15, 'TP3 Hit - Partial')
-            worksheet.update_cell(row_num, 18, f"{timestamp} @ {price}")
-            if cumulative_profit != 0:
-                worksheet.update_cell(row_num, 22, f"${cumulative_profit:.2f}")
-        elif event == 'TP4_HIT':
-            worksheet.update_cell(row_num, 15, 'TP4 Hit - Closed')
-            worksheet.update_cell(row_num, 19, f"{timestamp} @ {price}")
-            worksheet.update_cell(row_num, 23, timestamp)
-            worksheet.update_cell(row_num, 21, 'Win')
-            if cumulative_profit != 0:
-                worksheet.update_cell(row_num, 22, f"${cumulative_profit:.2f}")
-            elif profit != 0:
-                worksheet.update_cell(row_num, 22, f"${profit:.2f}")
-            duration = calculate_duration(outcome, worksheet, row_num)
-            if duration:
-                worksheet.update_cell(row_num, 24, duration)
-        elif event == 'BE_MOVED':
-            worksheet.update_cell(row_num, 20, f"Yes @ {timestamp}")
-            if 'be_price' in outcome:
-                worksheet.update_cell(row_num, 8, outcome['be_price'])
-            elif 'entry_price' in outcome:
-                worksheet.update_cell(row_num, 8, outcome['entry_price'])
-            elif price != 0:
-                worksheet.update_cell(row_num, 8, price)
-        elif event == 'BE_CLOSED':
-            current_stage = outcome.get('current_stage', 1)
-            worksheet.update_cell(row_num, 15, 'BE Hit - Closed')
-            worksheet.update_cell(row_num, 21, f"Closed at BE (after TP{current_stage})")
-            worksheet.update_cell(row_num, 23, timestamp)
-            if cumulative_profit != 0:
-                worksheet.update_cell(row_num, 22, f"${cumulative_profit:.2f}")
-            elif profit != 0:
-                worksheet.update_cell(row_num, 22, f"${profit:.2f}")
-            duration = calculate_duration(outcome, worksheet, row_num)
-            if duration:
-                worksheet.update_cell(row_num, 24, duration)
-        elif event == 'SL_TRAILED' or event == 'TRAIL_MOVED':
-            if 'new_sl' in outcome:
-                worksheet.update_cell(row_num, 8, outcome['new_sl'])
-            elif price != 0:
-                worksheet.update_cell(row_num, 8, price)
-        elif event == 'SL_HIT':
-            worksheet.update_cell(row_num, 15, 'SL Hit - Closed')
-            worksheet.update_cell(row_num, 23, timestamp)
-            if price != 0:
-                worksheet.update_cell(row_num, 8, price)
-            if profit != 0:
-                worksheet.update_cell(row_num, 22, f"${profit:.2f}")
-            if profit == 0 or (profit > -1 and profit < 1):
-                worksheet.update_cell(row_num, 21, 'Breakeven')
-            elif profit > 0:
-                worksheet.update_cell(row_num, 21, 'Win')
-            else:
-                worksheet.update_cell(row_num, 21, 'Loss')
-            duration = calculate_duration(outcome, worksheet, row_num)
-            if duration:
-                worksheet.update_cell(row_num, 24, duration)
-        elif event == 'MANUAL_CLOSE' or event == 'CLOSED':
-            worksheet.update_cell(row_num, 15, 'Manually Closed')
-            worksheet.update_cell(row_num, 23, timestamp)
-            if profit != 0:
-                worksheet.update_cell(row_num, 22, f"${profit:.2f}")
-            if profit > 0:
-                worksheet.update_cell(row_num, 21, 'Win (Manual)')
-            elif profit < 0:
-                worksheet.update_cell(row_num, 21, 'Loss (Manual)')
-            else:
-                worksheet.update_cell(row_num, 21, 'Breakeven (Manual)')
-            duration = calculate_duration(outcome, worksheet, row_num)
-            if duration:
-                worksheet.update_cell(row_num, 24, duration)
-        print(f"[SHEETS] Updated {worksheet.title}: {outcome.get('trade_id')} | {event}")
+        trade_id = outcome.get('trade_id', '')
+        
+        # Update master log
         if event in ['TP4_HIT', 'SL_HIT', 'MANUAL_CLOSE', 'BE_CLOSED', 'CLOSED']:
             update_master_on_close(outcome)
+        
+        # Log to daily sheet by CLOSE DATE
+        if event in ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'TP4_HIT', 'SL_HIT', 'BE_CLOSED', 'MANUAL_CLOSE', 'CLOSED']:
+            log_close_to_daily_sheet(outcome)
+        
+        # Update MT5 balance in the close date's sheet
+        if event in ['TP4_HIT', 'SL_HIT', 'MANUAL_CLOSE', 'BE_CLOSED', 'CLOSED']:
             if 'mt5_balance' in outcome:
                 try:
-                    worksheet.update_cell(3, 2, outcome['mt5_balance'])
+                    timestamp = outcome.get('timestamp', '')
+                    close_dt = datetime.strptime(timestamp.replace('.', '-'), '%Y-%m-%d %H:%M:%S')
+                    account_number = outcome.get('account_number')
+                    sheet = get_or_create_daily_worksheet_for_date(account_number, close_dt)
+                    if sheet:
+                        sheet.update_cell(3, 2, outcome['mt5_balance'])
                 except:
                     pass
+        
         return True
+        
     except Exception as e:
-        print(f"[ERROR] Failed to update Fibo outcome: {e}")
+        print(f"[ERROR] Failed to update trade outcome: {e}")
         return False
 
 # ═══════════════════════════════════════════════════════════════════
-# ORB SHEET FUNCTIONS (FULL)
+# ORB SHEET FUNCTIONS (UNCHANGED)
 # ═══════════════════════════════════════════════════════════════════
 
 def get_or_create_orb_daily_worksheet():
@@ -796,7 +763,7 @@ def process_orb_update_background(data):
 def home():
     return jsonify({
         "status": "Trading Webhook Active",
-        "version": "4.3 - Fixed Risk Percent",
+        "version": "5.0 - Close Date Logging",
         "endpoints": {"fibo": "/fibo", "orb": "/orb", "update": "/update", "orb_update": "/orb_update", "health": "/health"},
         "forwards_to": TAILSCALE_URL,
         "google_logging": ENABLE_GOOGLE_LOGGING,
@@ -891,7 +858,7 @@ def orb_update_webhook():
 def health():
     return jsonify({
         "status": "running",
-        "version": "4.3 - Fixed Risk Percent",
+        "version": "5.0 - Close Date Logging",
         "google_sheets_fibo": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID),
         "google_sheets_orb": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_ORB),
         "google_sheets_master": ENABLE_GOOGLE_LOGGING and bool(GOOGLE_SHEET_ID_MASTER),
@@ -900,7 +867,7 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"[STARTUP] Trading Webhook v4.3 - Fixed Risk Percent")
-    print(f"[STARTUP] All endpoints now accept any Content-Type")
+    print(f"[STARTUP] Trading Webhook v5.0 - Close Date Logging")
+    print(f"[STARTUP] Daily sheets now log by CLOSE date (realized P/L only)")
     print(f"[STARTUP] Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
