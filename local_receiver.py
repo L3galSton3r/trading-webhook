@@ -20,12 +20,19 @@ def find_mt5_signals_folder():
     if not os.path.exists(MT5_SIGNALS_PATH):
         return None
     
-    for folder in os.listdir(MT5_SIGNALS_PATH):
-        signals_path = os.path.join(MT5_SIGNALS_PATH, folder, 'MQL5', 'Files', 'Signals')
-        if os.path.exists(signals_path):
-            return signals_path
+    # ═══════════════════════════════════════════════════════════════
+    # ✅ FIX: Use the correct terminal folder
+    # ═══════════════════════════════════════════════════════════════
+    correct_terminal = "D0E8209F77C8CF37AD8BF550E51FF075"
+    signals_path = os.path.join(MT5_SIGNALS_PATH, correct_terminal, 'MQL5', 'Files', 'Signals')
     
-    return None
+    if os.path.exists(signals_path):
+        return signals_path
+    
+    # Fallback: Create the folder if it doesn't exist
+    os.makedirs(signals_path, exist_ok=True)
+    return signals_path
+    # ═══════════════════════════════════════════════════════════════
 
 SIGNALS_FOLDER = find_mt5_signals_folder()
 RENDER_URL = "https://trading-webhook-aep9.onrender.com"
