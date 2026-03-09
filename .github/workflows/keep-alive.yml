@@ -1,0 +1,12 @@
+name: Keep Render Awake
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # Runs every 10 minutes
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping trading webhook
+        run: curl -s https://trading-webhook-aep9.onrender.com
