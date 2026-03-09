@@ -225,10 +225,6 @@ def get_or_create_daily_worksheet_for_date(account_number, target_date):
             # Create worksheet
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
             
-            # ═══════════════════════════════════════════════════════════
-            # ✅ FIX: Use BATCH update instead of individual writes
-            # ═══════════════════════════════════════════════════════════
-            
             # Prepare all data updates
             updates = []
             
@@ -249,13 +245,13 @@ def get_or_create_daily_worksheet_for_date(account_number, target_date):
                 ]
             })
             
-            # Stats section (D2:E5)
+            # Stats section (D2:E5) - FIXED: Only count FINAL trade outcomes
             updates.append({
                 'range': 'D2:E5',
                 'values': [
-                    ['Closed Trades:', '=COUNTA(A9:A)'],
-                    ['Wins:', '=COUNTIF(M9:M,">0")'],
-                    ['Losses:', '=COUNTIF(M9:M,"<0")'],
+                    ['Closed Trades:', '=COUNTIF(I:I,"Final TP4")+COUNTIF(I:I,"Stop Loss")+COUNTIF(I:I,"Manual Close")+COUNTIF(I:I,"BE Close")'],
+                    ['Wins:', '=SUMPRODUCT((I:I="Final TP4")*(M:M>0))+SUMPRODUCT((I:I="Stop Loss")*(M:M>0))+SUMPRODUCT((I:I="BE Close")*(M:M>0))+SUMPRODUCT((I:I="Manual Close")*(M:M>0))'],
+                    ['Losses:', '=SUMPRODUCT((I:I="Final TP4")*(M:M<0))+SUMPRODUCT((I:I="Stop Loss")*(M:M<0))+SUMPRODUCT((I:I="BE Close")*(M:M<0))+SUMPRODUCT((I:I="Manual Close")*(M:M<0))'],
                     ['Win Rate:', '=IF(E2>0,TEXT(E3/E2*100,"0.0")&"%","0%")']
                 ]
             })
