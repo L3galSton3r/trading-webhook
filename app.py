@@ -413,9 +413,19 @@ def log_close_to_daily_sheet(outcome):
             if entry_time and close_time:
                 duration = calculate_duration_from_times(entry_time, close_time)
             
-            # Calculate balance after (cumulative from starting balance + all P/L so far)
+            # ═══════════════════════════════════════════════════════════════
+            # ✅ FIX: Use MT5 balance as starting balance if this is first trade
+            # ═══════════════════════════════════════════════════════════════
             all_values = sheet.get_all_values()
-            current_balance = parse_dollar_value(sheet.cell(2, 2).value)  # Starting balance
+            starting_balance_cell = sheet.cell(2, 2).value
+            current_balance = parse_dollar_value(starting_balance_cell)
+            
+            # If starting balance is 0 and we have MT5 balance, use that
+            if current_balance == 0 and 'mt5_balance' in outcome:
+                current_balance = outcome['mt5_balance']
+                # Update the starting balance cell
+                sheet.update_cell(2, 2, current_balance)
+                print(f"[SHEETS] ✅ Set starting balance to ${current_balance:.2f} from MT5")
             
             # Sum all existing P/L in this sheet
             for row_idx in range(8, len(all_values)):  # Start from row 9 (data rows)
@@ -425,8 +435,11 @@ def log_close_to_daily_sheet(outcome):
             
             # Add this trade's P/L
             balance_after = current_balance + realized_pnl
+            # ═══════════════════════════════════════════════════════════════
             
-            # Build row
+            # ═══════════════════════════════════════════════════════════════
+            # ✅ FIX: Store P/L as NUMBER (not text with $)
+            # ═══════════════════════════════════════════════════════════════
             row = [
                 trade_id,
                 symbol,
@@ -440,9 +453,10 @@ def log_close_to_daily_sheet(outcome):
                 lot_size,
                 risk_display,
                 duration,
-                f"${realized_pnl:.2f}",
-                f"${balance_after:.2f}"
+                realized_pnl,      # ✅ Just the number
+                balance_after      # ✅ Just the number
             ]
+            # ═══════════════════════════════════════════════════════════════
             
             sheet.append_row(row, value_input_option='USER_ENTERED')
             
