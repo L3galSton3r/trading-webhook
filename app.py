@@ -791,7 +791,7 @@ def process_fibo_background(data):
     try:
         print(f"[Background] Processing FIBO: {data.get('trade_id')}")
         try:
-            response = requests.post(f"{TAILSCALE_URL}/fibo", json=data, timeout=10)
+            response = requests.post(f"{TAILSCALE_URL}/fibo", json=data, timeout=30)
             print(f"[Background] Forwarded FIBO to local: {response.status_code}")
         except Exception as e:
             print(f"[Background] Failed to forward FIBO: {e}")
@@ -802,7 +802,7 @@ def process_orb_background(data):
     try:
         print(f"[Background] Processing ORB: {data.get('trade_id')}")
         try:
-            response = requests.post(f"{TAILSCALE_URL}/orb", json=data, timeout=10)
+            response = requests.post(f"{TAILSCALE_URL}/orb", json=data, timeout=30)
             print(f"[Background] Forwarded ORB to local: {response.status_code}")
         except Exception as e:
             print(f"[Background] Failed to forward ORB: {e}")
