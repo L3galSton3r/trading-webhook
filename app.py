@@ -346,7 +346,8 @@ def log_entry_to_sheets(signal):
 
 def log_close_to_daily_sheet(outcome):
     """
-    NEW FUNCTION: Log a close/partial close to the CLOSE DATE's daily sheet.
+    Log a close/partial close to the CLOSE DATE's daily sheet.
+    FIXED: Balance calculation now uses last row's balance, not sum of all rows.
     """
     with sheets_lock:
         try:
@@ -394,7 +395,7 @@ def log_close_to_daily_sheet(outcome):
             else:
                 event_type = event
             
-            # Get realized P/L
+            # Get realized P/L from MT5 (THIS close only)
             realized_pnl = outcome.get('profit', 0)
             
             # Get risk %
@@ -410,32 +411,38 @@ def log_close_to_daily_sheet(outcome):
                 duration = calculate_duration_from_times(entry_time, close_time)
             
             # ═══════════════════════════════════════════════════════════════
-            # ✅ FIX: Use MT5 balance as starting balance if this is first trade
+            # ✅ FIX: Get balance from LAST row, not by summing all rows
             # ═══════════════════════════════════════════════════════════════
             all_values = sheet.get_all_values()
+            
+            # Get starting balance from cell B2
             starting_balance_cell = sheet.cell(2, 2).value
-            current_balance = parse_dollar_value(starting_balance_cell)
+            starting_balance = parse_dollar_value(starting_balance_cell)
             
             # If starting balance is 0 and we have MT5 balance, use that
-            if current_balance == 0 and 'mt5_balance' in outcome:
-                current_balance = outcome['mt5_balance']
-                # Update the starting balance cell
-                sheet.update_cell(2, 2, current_balance)
-                print(f"[SHEETS] ✅ Set starting balance to ${current_balance:.2f} from MT5")
+            if starting_balance == 0 and 'mt5_balance' in outcome:
+                starting_balance = outcome['mt5_balance']
+                sheet.update_cell(2, 2, starting_balance)
+                print(f"[SHEETS] ✅ Set starting balance to ${starting_balance:.2f} from MT5")
             
-            # Sum all existing P/L in this sheet
-            for row_idx in range(8, len(all_values)):  # Start from row 9 (data rows)
-                pnl_cell = sheet.cell(row_idx + 1, 13).value
-                if pnl_cell:
-                    current_balance += parse_dollar_value(pnl_cell)
-            
-            # Add this trade's P/L
-            balance_after = current_balance + realized_pnl
+            # Calculate balance_after based on LAST row's balance
+            if len(all_values) > 8:
+                # There are existing data rows (row 9+)
+                last_row_idx = len(all_values)
+                last_balance_cell = sheet.cell(last_row_idx, 14).value  # Column N = Balance After
+                
+                if last_balance_cell:
+                    # Add this trade's P/L to last row's balance
+                    balance_after = parse_dollar_value(last_balance_cell) + realized_pnl
+                else:
+                    # Last row has no balance, use starting balance
+                    balance_after = starting_balance + realized_pnl
+            else:
+                # First trade of the day - use starting balance
+                balance_after = starting_balance + realized_pnl
             # ═══════════════════════════════════════════════════════════════
             
-            # ═══════════════════════════════════════════════════════════════
-            # ✅ FIX: Store P/L as NUMBER (not text with $)
-            # ═══════════════════════════════════════════════════════════════
+            # Build row
             row = [
                 trade_id,
                 symbol,
@@ -449,14 +456,13 @@ def log_close_to_daily_sheet(outcome):
                 lot_size,
                 risk_display,
                 duration,
-                realized_pnl,      # ✅ Just the number
-                balance_after      # ✅ Just the number
+                realized_pnl,
+                balance_after
             ]
-            # ═══════════════════════════════════════════════════════════════
             
             sheet.append_row(row, value_input_option='USER_ENTERED')
             
-            print(f"[SHEETS] ✅ Close logged to {sheet.title}: {trade_id} | {event_type} | P/L: ${realized_pnl:.2f}")
+            print(f"[SHEETS] ✅ Close logged to {sheet.title}: {trade_id} | {event_type} | P/L: ${realized_pnl:.2f} | Balance: ${balance_after:.2f}")
             return True
             
         except Exception as e:
