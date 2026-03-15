@@ -189,6 +189,7 @@ def get_or_create_daily_worksheet_for_date(account_number, target_date):
     """
     Get or create a daily performance sheet for a SPECIFIC date.
     Uses BATCH updates to avoid Google Sheets API rate limits.
+    Looks back up to 7 days to find last ending balance.
     """
     try:
         spreadsheet = get_google_spreadsheet(GOOGLE_SHEET_ID)
@@ -209,18 +210,26 @@ def get_or_create_daily_worksheet_for_date(account_number, target_date):
         except gspread.exceptions.WorksheetNotFound:
             print(f"[SHEETS] Creating new daily sheet: {sheet_name}")
             
-            # Calculate starting balance from previous day
+            # ═══════════════════════════════════════════════════════════════
+            # ✅ FIX: Look back up to 7 days to find last ending balance
+            # ═══════════════════════════════════════════════════════════════
             starting_balance = 0.0
-            try:
-                prev_date = target_date - timedelta(days=1)
-                prev_sheet_name = f"{prefix}-{prev_date.strftime('%Y-%m-%d')}"
-                prev_sheet = spreadsheet.worksheet(prev_sheet_name)
-                prev_ending_balance = prev_sheet.cell(3, 2).value
-                if prev_ending_balance:
-                    starting_balance = parse_dollar_value(prev_ending_balance)
-                    print(f"[SHEETS] ✅ Starting balance from {prev_sheet_name}: ${starting_balance:.2f}")
-            except Exception as e:
-                print(f"[SHEETS] No previous day sheet found, starting at $0.00")
+            for days_back in range(1, 8):  # Check up to 7 days back
+                try:
+                    prev_date = target_date - timedelta(days=days_back)
+                    prev_sheet_name = f"{prefix}-{prev_date.strftime('%Y-%m-%d')}"
+                    prev_sheet = spreadsheet.worksheet(prev_sheet_name)
+                    prev_ending_balance = prev_sheet.cell(3, 2).value
+                    if prev_ending_balance:
+                        starting_balance = parse_dollar_value(prev_ending_balance)
+                        print(f"[SHEETS] ✅ Starting balance from {prev_sheet_name} ({days_back} days back): ${starting_balance:.2f}")
+                        break  # Found it, stop searching
+                except Exception as e:
+                    continue  # Keep looking
+            
+            if starting_balance == 0:
+                print(f"[SHEETS] ⚠️ No previous sheet found within 7 days, starting at $0.00")
+            # ═══════════════════════════════════════════════════════════════
             
             # Create worksheet
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
@@ -245,7 +254,7 @@ def get_or_create_daily_worksheet_for_date(account_number, target_date):
                 ]
             })
             
-            # Stats section (D2:E5) - FIXED: Only count FINAL trade outcomes
+            # Stats section (D2:E5)
             updates.append({
                 'range': 'D2:E5',
                 'values': [
@@ -275,7 +284,6 @@ def get_or_create_daily_worksheet_for_date(account_number, target_date):
             
             # Apply formatting in ONE batch
             worksheet.batch_format([
-                # Header merge and format
                 {
                     'range': 'A1:T1',
                     'format': {
@@ -284,12 +292,10 @@ def get_or_create_daily_worksheet_for_date(account_number, target_date):
                         'horizontalAlignment': 'CENTER'
                     }
                 },
-                # Balance labels bold
                 {
                     'range': 'A2:A4',
                     'format': {'textFormat': {'bold': True}}
                 },
-                # Balance values currency format
                 {
                     'range': 'B2:B4',
                     'format': {
@@ -297,12 +303,10 @@ def get_or_create_daily_worksheet_for_date(account_number, target_date):
                         'numberFormat': {'type': 'CURRENCY', 'pattern': '$#,##0.00'}
                     }
                 },
-                # Stats labels bold
                 {
                     'range': 'D2:D5',
                     'format': {'textFormat': {'bold': True}}
                 },
-                # Column headers
                 {
                     'range': 'A8:N8',
                     'format': {
@@ -313,7 +317,7 @@ def get_or_create_daily_worksheet_for_date(account_number, target_date):
                 }
             ])
             
-            # Merge cells (separate request, but only one)
+            # Merge cells
             worksheet.merge_cells('A1:T1')
             worksheet.merge_cells('A6:T6')
             
