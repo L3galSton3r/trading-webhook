@@ -414,36 +414,28 @@ def log_close_to_daily_sheet(outcome):
             if entry_time and close_time:
                 duration = calculate_duration_from_times(entry_time, close_time)
             
+                        # ═══════════════════════════════════════════════════════════════
+            # ✅ FIX: Use MT5 balance directly (most accurate)
             # ═══════════════════════════════════════════════════════════════
-            # ✅ FIX: Get balance from LAST row, not by summing all rows
-            # ═══════════════════════════════════════════════════════════════
-            all_values = sheet.get_all_values()
             
-            # Get starting balance from cell B2
-            starting_balance_cell = sheet.cell(2, 2).value
-            starting_balance = parse_dollar_value(starting_balance_cell)
-            
-            # If starting balance is 0 and we have MT5 balance, use that
-            if starting_balance == 0 and 'mt5_balance' in outcome:
-                starting_balance = outcome['mt5_balance']
-                sheet.update_cell(2, 2, starting_balance)
-                print(f"[SHEETS] ✅ Set starting balance to ${starting_balance:.2f} from MT5")
-            
-            # Calculate balance_after based on LAST row's balance
-            if len(all_values) > 8:
-                # There are existing data rows (row 9+)
-                last_row_idx = len(all_values)
-                last_balance_cell = sheet.cell(last_row_idx, 14).value  # Column N = Balance After
-                
-                if last_balance_cell:
-                    # Add this trade's P/L to last row's balance
-                    balance_after = parse_dollar_value(last_balance_cell) + realized_pnl
-                else:
-                    # Last row has no balance, use starting balance
-                    balance_after = starting_balance + realized_pnl
+            # Get the actual MT5 balance AFTER this close (most accurate)
+            if 'mt5_balance' in outcome:
+                balance_after = outcome['mt5_balance']
             else:
-                # First trade of the day - use starting balance
-                balance_after = starting_balance + realized_pnl
+                # Fallback: calculate from last row
+                all_values = sheet.get_all_values()
+                starting_balance_cell = sheet.cell(2, 2).value
+                starting_balance = parse_dollar_value(starting_balance_cell)
+                
+                if len(all_values) > 8:
+                    last_row_idx = len(all_values)
+                    last_balance_cell = sheet.cell(last_row_idx, 14).value
+                    if last_balance_cell:
+                        balance_after = parse_dollar_value(last_balance_cell) + realized_pnl
+                    else:
+                        balance_after = starting_balance + realized_pnl
+                else:
+                    balance_after = starting_balance + realized_pnl
             # ═══════════════════════════════════════════════════════════════
             
             # Build row
