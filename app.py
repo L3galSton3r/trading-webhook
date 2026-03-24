@@ -166,21 +166,59 @@ def update_master_on_close(data):
         if not cell:
             return
         row_num = cell.row
+        
+        # Get timestamps
         close_time_str = data.get('timestamp', '')
-        close_day = datetime.strptime(close_time_str.replace('.', '-'), '%Y-%m-%d %H:%M:%S').strftime('%A') if close_time_str else ""
+        close_day = ""
+        if close_time_str:
+            try:
+                close_day = datetime.strptime(close_time_str.replace('.', '-'), '%Y-%m-%d %H:%M:%S').strftime('%A')
+            except:
+                pass
+        
+        # Calculate duration
         entry_time_str = worksheet.cell(row_num, 5).value
         duration = calculate_duration_from_times(entry_time_str, close_time_str) if entry_time_str else ""
+        
+        # Get P/L breakdown from EA
+        gross_pnl = data.get('gross_profit', 0)
+        commission = data.get('commission', 0)
+        swap = data.get('swap', 0)
         net_pnl = data.get('cumulative_profit') or data.get('profit', 0)
-        worksheet.update_cell(row_num, 9, close_time_str)
-        worksheet.update_cell(row_num, 10, data.get('price', ''))
-        worksheet.update_cell(row_num, 14, net_pnl)
-        worksheet.update_cell(row_num, 16, duration)
-        worksheet.update_cell(row_num, 18, close_day)
-        worksheet.update_cell(row_num, 19, data.get('event', 'CLOSED'))
-        print(f"[SHEETS] ✅ Master Log updated on close: {trade_id}")
+        
+        # If gross not sent, calculate from net
+        if gross_pnl == 0 and net_pnl != 0:
+            gross_pnl = net_pnl - commission - swap
+        
+        # Calculate R Multiple
+        r_multiple = ""
+        try:
+            entry_balance_str = worksheet.cell(row_num, 7).value
+            risk_pct_str = worksheet.cell(row_num, 8).value
+            if entry_balance_str and risk_pct_str:
+                entry_balance = parse_dollar_value(entry_balance_str)
+                risk_pct = float(str(risk_pct_str).replace('%', ''))
+                risk_amount = entry_balance * (risk_pct / 100)
+                if risk_amount > 0:
+                    r_multiple = round(net_pnl / risk_amount, 2)
+        except:
+            pass
+        
+        # Update all columns
+        worksheet.update_cell(row_num, 9, close_time_str)      # Close Time
+        worksheet.update_cell(row_num, 10, data.get('price', ''))  # Close Price
+        worksheet.update_cell(row_num, 11, gross_pnl)          # Gross P/L
+        worksheet.update_cell(row_num, 12, commission)         # Commission
+        worksheet.update_cell(row_num, 13, swap)               # Swap
+        worksheet.update_cell(row_num, 14, net_pnl)            # Net P/L
+        worksheet.update_cell(row_num, 15, r_multiple)         # R Multiple
+        worksheet.update_cell(row_num, 16, duration)           # Duration
+        worksheet.update_cell(row_num, 18, close_day)          # Close Day
+        worksheet.update_cell(row_num, 19, data.get('event', 'CLOSED'))  # Status
+        
+        print(f"[SHEETS] ✅ Master Log updated: {trade_id} | Gross: ${gross_pnl:.2f} | Comm: ${commission:.2f} | Swap: ${swap:.2f} | Net: ${net_pnl:.2f} | R: {r_multiple}")
     except Exception as e:
         print(f"[ERROR] Master close update: {e}")
-
 # ═══════════════════════════════════════════════════════════════════
 # DAILY PERFORMANCE SHEETS (COMPLETELY REWRITTEN - LOGS BY CLOSE DATE)
 # ═══════════════════════════════════════════════════════════════════
