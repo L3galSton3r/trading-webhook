@@ -462,7 +462,7 @@ def log_close_to_daily_sheet(outcome):
             if entry_time and close_time:
                 duration = calculate_duration_from_times(entry_time, close_time)
             
-                        # ═══════════════════════════════════════════════════════════════
+            # ═══════════════════════════════════════════════════════════════
             # ✅ FIX: Use MT5 balance directly (most accurate)
             # ═══════════════════════════════════════════════════════════════
             
