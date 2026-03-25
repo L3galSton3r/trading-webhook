@@ -184,19 +184,13 @@ def update_master_on_close(data):
         gross_pnl = data.get('gross_profit', 0)
         commission = data.get('commission', 0)
         swap = data.get('swap', 0)
-        # Calculate net P/L from breakdown
-gross_pnl = data.get('gross_profit', 0)
-commission = data.get('commission', 0)
-swap = data.get('swap', 0)
-net_pnl = gross_pnl + commission + swap
-
-# If no breakdown available, use profit field
-if gross_pnl == 0 and commission == 0 and swap == 0:
-    net_pnl = data.get('cumulative_profit') or data.get('profit', 0)
         
-        # If gross not sent, calculate from net
-        if gross_pnl == 0 and net_pnl != 0:
-            gross_pnl = net_pnl - commission - swap
+        # Calculate net P/L from breakdown
+        net_pnl = gross_pnl + commission + swap
+        
+        # If no breakdown available, use profit field
+        if gross_pnl == 0 and commission == 0 and swap == 0:
+            net_pnl = data.get('cumulative_profit') or data.get('profit', 0)
         
         # Calculate R Multiple
         r_multiple = ""
