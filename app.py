@@ -439,8 +439,16 @@ def log_close_to_daily_sheet(outcome):
             else:
                 event_type = event
             
-            # Get realized P/L from MT5 (THIS close only)
-            realized_pnl = outcome.get('profit', 0)
+            # Get realized P/L (Net = Gross + Commission + Swap)
+            gross_pnl = outcome.get('gross_profit', 0)
+            commission = outcome.get('commission', 0)
+            swap = outcome.get('swap', 0)
+            
+            # Calculate net P/L
+            if gross_pnl != 0 or commission != 0 or swap != 0:
+                realized_pnl = gross_pnl + commission + swap
+            else:
+                realized_pnl = outcome.get('profit', 0)
             
             # Get risk %
             if 'risk_percent' in outcome:
