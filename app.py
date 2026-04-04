@@ -185,12 +185,17 @@ def update_master_on_close(data):
         commission = data.get('commission', 0)
         swap = data.get('swap', 0)
         
-        # Calculate net P/L from breakdown
-        net_pnl = gross_pnl + commission + swap
+        # For final closes, use cumulative profit (total across all partials)
+        cumulative = data.get('cumulative_profit', 0)
+        is_final = data.get('is_final_close', False)
         
-        # If no breakdown available, use profit field
-        if gross_pnl == 0 and commission == 0 and swap == 0:
-            net_pnl = data.get('cumulative_profit') or data.get('profit', 0)
+        if is_final and cumulative != 0:
+            # Use cumulative for the total trade P/L
+            net_pnl = cumulative
+        elif gross_pnl != 0 or commission != 0 or swap != 0:
+            net_pnl = gross_pnl + commission + swap
+        else:
+            net_pnl = data.get('profit', 0)
         
         # Calculate R Multiple
         r_multiple = ""
@@ -206,6 +211,13 @@ def update_master_on_close(data):
         except:
             pass
         
+        # Show correct status
+        event = data.get('event', 'CLOSED')
+        if is_final and event in ['TP1_HIT', 'TP2_HIT', 'TP3_HIT']:
+            status = f"{event}_FINAL"
+        else:
+            status = event
+        
         # Update all columns
         worksheet.update_cell(row_num, 9, close_time_str)      # Close Time
         worksheet.update_cell(row_num, 10, data.get('price', ''))  # Close Price
@@ -216,11 +228,12 @@ def update_master_on_close(data):
         worksheet.update_cell(row_num, 15, r_multiple)         # R Multiple
         worksheet.update_cell(row_num, 16, duration)           # Duration
         worksheet.update_cell(row_num, 18, close_day)          # Close Day
-        worksheet.update_cell(row_num, 19, data.get('event', 'CLOSED'))  # Status
+        worksheet.update_cell(row_num, 19, status)             # Status
         
         print(f"[SHEETS] ✅ Master Log updated: {trade_id} | Gross: ${gross_pnl:.2f} | Comm: ${commission:.2f} | Swap: ${swap:.2f} | Net: ${net_pnl:.2f} | R: {r_multiple}")
     except Exception as e:
         print(f"[ERROR] Master close update: {e}")
+
 # ═══════════════════════════════════════════════════════════════════
 # DAILY PERFORMANCE SHEETS (COMPLETELY REWRITTEN - LOGS BY CLOSE DATE)
 # ═══════════════════════════════════════════════════════════════════
@@ -518,21 +531,27 @@ def log_close_to_daily_sheet(outcome):
 def update_trade_outcome(outcome):
     """
     REWRITTEN: On close events, log to daily sheet by CLOSE DATE.
+    FIXED: Master updates on ANY final close (including TP1 when position fully closes)
     """
     try:
         event = outcome.get('event', '')
         trade_id = outcome.get('trade_id', '')
+        is_final = outcome.get('is_final_close', False)
         
-        # Update master log
+        # Update master log on FINAL close events
         if event in ['TP4_HIT', 'SL_HIT', 'MANUAL_CLOSE', 'BE_CLOSED', 'CLOSED']:
             update_master_on_close(outcome)
+        elif event in ['TP1_HIT', 'TP2_HIT', 'TP3_HIT'] and is_final:
+            # Position fully closed at early TP (e.g., 0.01 lots can't partial)
+            update_master_on_close(outcome)
+            print(f"[SHEETS] ✅ Master updated on early final close: {trade_id} | {event}")
         
-        # Log to daily sheet by CLOSE DATE
+        # Log to daily sheet by CLOSE DATE (ALL close events)
         if event in ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'TP4_HIT', 'SL_HIT', 'BE_CLOSED', 'MANUAL_CLOSE', 'CLOSED']:
             log_close_to_daily_sheet(outcome)
         
-        # Update MT5 balance in the close date's sheet
-        if event in ['TP4_HIT', 'SL_HIT', 'MANUAL_CLOSE', 'BE_CLOSED', 'CLOSED']:
+        # Update ending balance on final closes
+        if event in ['TP4_HIT', 'SL_HIT', 'MANUAL_CLOSE', 'BE_CLOSED', 'CLOSED'] or (event in ['TP1_HIT', 'TP2_HIT', 'TP3_HIT'] and is_final):
             if 'mt5_balance' in outcome:
                 try:
                     timestamp = outcome.get('timestamp', '')
@@ -548,7 +567,7 @@ def update_trade_outcome(outcome):
         
     except Exception as e:
         print(f"[ERROR] Failed to update trade outcome: {e}")
-        return False
+        return False 
 
 # ═══════════════════════════════════════════════════════════════════
 # ORB SHEET FUNCTIONS (UNCHANGED)
